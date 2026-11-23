@@ -96,6 +96,6 @@ Los detalles obligatorios están en:
 
 ## Equipo
 
-Nombres:Iñigo
+Nombres: Imanol, Iñigo
 
 Metodología: B (Spec-Driven)
