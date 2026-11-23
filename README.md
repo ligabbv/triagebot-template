@@ -42,6 +42,24 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
+### Windows (PowerShell)
+
+Usa **Python 3.11–3.13**. Con Python 3.14 la instalación falla: `pydantic==2.10.4`
+no tiene paquete precompilado de `pydantic-core` para 3.14 e intenta compilarlo
+con Rust (`linker link.exe not found`). Comprueba tus versiones con `py --list`
+e instala 3.13 si hace falta (`winget install Python.Python.3.13`).
+
+```powershell
+cd triagebot-template
+py -3.13 -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+Copy-Item .env.example .env
+```
+
+Si al activar aparece "la ejecución de scripts está deshabilitada":
+`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+
 Edita `.env` y añade tu API key:
 
 ```bash
@@ -58,11 +76,30 @@ git status
 
 ## Ejecutar tests
 
+Con el venv activado:
+
 ```bash
-pytest -v
+pytest        # ejecuta todos los tests
+pytest -v     # los lista uno a uno
 ```
 
-Al clonar el repo plantilla, los tests de aceptación deben fallar. Eso es lo esperado: todavía no habéis implementado TriageBot.
+- **pytest** es el motor: una herramienta externa (viene en `requirements.txt`)
+  que busca archivos `test_*.py` y ejecuta las funciones `test_*()`.
+- **`tests/test_acceptance.py`** es lo que el motor lee: los 5 tests del curso.
+  **No se modifica.**
+- Cada test usa `assert`: si la condición es verdadera, pasa (verde, `PASSED`);
+  si es falsa, falla (rojo, `FAILED`) y pytest muestra qué esperaba y qué recibió.
+
+Al clonar el repo plantilla, los tests de aceptación fallan: todavía no está
+implementado. Con el backend actual deben salir **`5 passed`**. Los tests no
+llaman al LLM real (sustituyen el clasificador), así que no gastan tokens ni
+necesitan la API key.
+
+Lint (lo ejecuta también la CI):
+
+```bash
+ruff check .
+```
 
 ## Ejecutar la app
 
@@ -99,3 +136,6 @@ Los detalles obligatorios están en:
 Nombres: Imanol, Iñigo
 
 Metodología: B (Spec-Driven)
+
+Las decisiones del equipo que se desvían de la spec están en la
+[sección 13 de `SPEC.md`](SPEC.md#13-decisiones-del-equipo).

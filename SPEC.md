@@ -5,7 +5,7 @@
 > partir de `BRIEF.md`; esto es el patrón con el que **reconciliarla**, no un
 > reemplazo. Comparad la vuestra con esta, adoptad lo que mejore vuestra versión
 > y conservad lo vuestro que ya esté bien. Las decisiones que toméis distintas a
-> esta, apuntadlas en la sección 12.
+> esta, apuntadlas en la sección 13.
 
 ---
 
@@ -71,6 +71,21 @@ Reglas de dependencia (quién puede importar a quién):
 - `classifier.py` → `openai`, `models`. **Nunca importa FastAPI** (si veis
   `from fastapi import …` en `classifier.py`, algo se ha torcido).
 
+> **Regla importante:** todo lo que llame a cualquier API de IA (OpenRouter,
+> Anthropic, etc.) vive **solo** en `app/classifier.py`: el import del SDK, la
+> `base_url`, el modelo, el prompt, la lectura de `OPENROUTER_API_KEY`, el
+> reintento y el parseo. Si veis llamadas al SDK en `main.py` (o en cualquier
+> otro módulo), hay un problema. Comprobación rápida (PowerShell):
+> `Select-String -Path app\*.py -Pattern "openai|openrouter|anthropic"` solo debe
+> devolver líneas de `classifier.py`.
+
+**Red de seguridad en `main.py`:** aunque el clasificador nunca lanza
+excepciones, `main.py` envuelve la llamada en un `try/except Exception` genérico
+y, si algo falla (o la salida no valida contra `models.Classification`), usa
+`classifier.fallback_classification()`. No es lógica de IA: no importa el SDK
+ni captura tipos del SDK. La exige el test 4, que sustituye el clasificador por
+una función que lanza `RuntimeError`.
+
 **Cómo llama `main.py` al clasificador (importante para los tests):** los tests
 sustituyen `app.classifier.classify_ticket` con `monkeypatch`. Para que esa
 sustitución surta efecto, `main.py` debe llamarlo **a través del módulo**:
@@ -125,9 +140,13 @@ CREATE TABLE IF NOT EXISTS tickets (
 );
 ```
 
-- La tabla se crea al arrancar la app (`db.init_db()` en el arranque de FastAPI).
-- La ruta del archivo se lee de la variable de entorno `TRIAGEBOT_DB`, con
-  `triagebot.db` por defecto. Así los tests pueden usar una base temporal.
+- La tabla se crea al arrancar la app (`db.init_db()` en el `lifespan` de
+  FastAPI) **y también** con `CREATE TABLE IF NOT EXISTS` en cada conexión: los
+  tests usan `TestClient(app)` sin `with`, así que en ellos no se ejecuta el
+  arranque.
+- La ruta del archivo se resuelve **en cada conexión** (no al importar), en este
+  orden: `DATABASE_URL` (formato `sqlite:///ruta`, es la que fijan los tests) →
+  `TRIAGEBOT_DB` → `triagebot.db`. Así cada test usa su propia base temporal.
 - **Todas** las consultas usan parámetros (`?`), nunca f-strings ni
   concatenación de SQL.
 - Una conexión por operación (abrir, ejecutar, `commit`, cerrar). Nada de
@@ -354,7 +373,8 @@ Reglas:
 
 - `.env` (no se commitea) con `OPENROUTER_API_KEY=sk-or-...`.
 - `.env.example` (sí se commitea) con la misma variable sin valor real.
-- Variables opcionales: `TRIAGEBOT_DB` (ruta de la base de datos).
+- Variables opcionales: `DATABASE_URL` (`sqlite:///ruta`, tiene prioridad) o
+  `TRIAGEBOT_DB` (ruta de la base de datos).
 - Arranque: `uvicorn app.main:app --reload` → `http://localhost:8000`.
 
 ---
@@ -455,4 +475,10 @@ el README) con fecha y motivo. Ejemplo:
 
 | Fecha | Decisión | Motivo |
 |-------|----------|--------|
-| | | |
+| 2026-11-23 | La BD se resuelve con `DATABASE_URL` → `TRIAGEBOT_DB` → `triagebot.db` en cada conexión, y la tabla se crea en cada conexión además de en el arranque. | El fixture de `tests/test_acceptance.py` fija `DATABASE_URL` después de importar la app y usa `TestClient` sin `with`. Sin esto todos los tests comparten BD y el test 5 (`len == 1`) falla. |
+| 2026-11-23 | `main.py` envuelve `classifier.classify_ticket()` en un `try/except Exception` y valida su salida con `models.Classification`; ante fallo usa `classifier.fallback_classification()`. | El test 4 sustituye el clasificador por uno que lanza `RuntimeError`. Es una red genérica: la IA sigue viviendo solo en `classifier.py`. |
+| 2026-11-23 | El cliente OpenAI se crea con `max_retries=0` y el reintento (uno solo) lo hace nuestro código. | El SDK reintenta 2 veces por defecto; superaría el máximo de un reintento del §6. |
+| 2026-11-23 | Se envía `extra_body={"reasoning": {"effort": "low"}}` a OpenRouter. | `gpt-oss-120b` es un modelo de razonamiento: con `max_tokens=1024` el razonamiento podría consumir todo el presupuesto y dejar la respuesta vacía (→ fallback). |
+| 2026-11-23 | En esta fase no se crean tests propios (§9.2 queda pendiente) y no se toca ningún `test_*.py`. | Indicación del equipo. |
+| 2026-11-23 | Se trabaja directamente en `main` (sin rama de feature) en esta fase. | Indicación del equipo. Revisar antes de activar la protección de `main` (§11). |
+| 2026-11-23 | En Windows se usa Python 3.13 para el venv (`py -3.13 -m venv .venv`). | Con Python 3.14 `pydantic==2.10.4` no tiene wheel de `pydantic-core` y la instalación intenta compilar Rust y falla. La CI usa 3.11. |
