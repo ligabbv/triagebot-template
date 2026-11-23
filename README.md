@@ -1,9 +1,10 @@
+#Iñigo
 # TriageBot Template
 
 Repo plantilla para el bootcamp **Prompt & Commit: Desarrollo de aplicaciones con IA Generativa**.
 
 Durante el bootcamp construiréis una aplicación web interna para clasificar tickets de soporte usando IA generativa.
-Hola todos
+
 ## Qué vais a construir
 
 TriageBot permite:
