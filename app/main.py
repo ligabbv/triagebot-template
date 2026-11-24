@@ -4,6 +4,7 @@ Aquí no hay SQL (va en db.py) ni llamadas a ninguna API de IA (van SOLO en clas
 """
 
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -32,12 +33,36 @@ from app.models import (
     TicketCreate,
     TicketStats,
     TicketUpdate,
+    strip_invisible,
 )
 
 # Se importa el MÓDULO classifier (no la función): los tests sustituyen
 # app.classifier.classify_ticket y la llamada debe pasar por el módulo para verlo.
 
 load_dotenv()
+
+LOG_LEVEL_ENV_VAR = "TRIAGEBOT_LOG_LEVEL"
+
+
+def configure_logging() -> None:
+    """Muestra en la consola los logs de la app (loggers "app.*") desde nivel INFO.
+
+    Sin esto, el logger "app" no tiene handler y Python solo enseña los WARNING: se perdía el
+    detalle de cada intento del clasificador ("intento 1/2 fallido (...)"; QA, escenario 6).
+    Solo se configura el logger "app": no se toca el de uvicorn ni el de otras librerías.
+    El nivel se puede cambiar con TRIAGEBOT_LOG_LEVEL (DEBUG, INFO, WARNING...).
+    """
+    app_logger = logging.getLogger("app")
+    if not app_logger.handlers:  # idempotente: --reload vuelve a importar el módulo
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)-9s %(name)s - %(message)s"))
+        app_logger.addHandler(handler)
+        app_logger.propagate = False  # evita líneas duplicadas si alguien configura el root
+    level = os.getenv(LOG_LEVEL_ENV_VAR, "INFO").strip().upper()
+    app_logger.setLevel(level if level in logging.getLevelNamesMapping() else "INFO")
+
+
+configure_logging()
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +115,7 @@ templates.env.filters["dia"] = _format_day
 
 def _clean_assignee(assignee: str) -> str:
     """Filtro por responsable: texto libre, espacios normalizados. Vacío = sin filtro."""
-    clean = " ".join(assignee.split())
+    clean = " ".join(strip_invisible(assignee).split())
     if len(clean) > MAX_ASSIGNEE_LENGTH:
         raise HTTPException(
             status_code=422,
