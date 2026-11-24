@@ -111,8 +111,8 @@ Una sola entidad: `Ticket`.
 | Campo | Tipo | Notas |
 |-------|------|-------|
 | `id` | int | Primary key, autoincremental |
-| `title` | str | Obligatorio. Se aplica `strip()`; tras él, longitud 1–200 |
-| `description` | str | Obligatorio. Se aplica `strip()`; tras él, longitud 1–5000 |
+| `title` | str | Obligatorio. Se quitan de los extremos los espacios **y los caracteres invisibles** (`​`, ` `, `﻿`…, ver §13); tras ello, longitud 1–200 |
+| `description` | str | Obligatorio. Misma limpieza que `title`; tras ella, longitud 1–5000 |
 | `category` | str | Uno de: `bug`, `feature_request`, `question`, `urgent` |
 | `priority` | str | Uno de: `P1`, `P2`, `P3` |
 | `tags` | list[str] | Lista (puede estar vacía). Máx. 5 tags, cada uno máx. 30 chars, en minúscula y sin duplicados |
@@ -505,6 +505,10 @@ de verdad hacen falta tickets nuevos etiquetados por Soporte.
 
 - Cada fallback se registra con `logging.warning` indicando la causa (excepción
   o salida inválida). **Nunca** se registra la API key.
+- Cada intento fallido se registra con `logging.info`
+  (`Clasificador: intento 1/2 fallido (causa)`). Para que se vea en la consola,
+  `main.py` da al logger `app` su propio handler con nivel `INFO`
+  (configurable con `TRIAGEBOT_LOG_LEVEL`, ver §8).
 - Nunca se propaga una excepción del SDK al endpoint.
 
 ---
@@ -606,6 +610,8 @@ Reglas:
 - `.env.example` (sí se commitea) con la misma variable sin valor real.
 - Variables opcionales: `DATABASE_URL` (`sqlite:///ruta`, tiene prioridad) o
   `TRIAGEBOT_DB` (ruta de la base de datos).
+- `TRIAGEBOT_LOG_LEVEL` (opcional): nivel de los logs de la app (`DEBUG`,
+  `INFO`, `WARNING`…). Por defecto `INFO`; un valor no válido cuenta como `INFO`.
 - Arranque: `uvicorn app.main:app --reload` → `http://localhost:8000`.
 
 ---
@@ -726,4 +732,6 @@ el README) con fecha y motivo. Ejemplo:
 | 2026-11-24 | **"Resuelto" = `closed`**: no se añade un estado nuevo; se reutiliza `closed` y se muestra como "Resuelto". Reabrir = volver a `open`. | Petición de Marta: abierto → en curso → resuelto, y reabrir. Los enums de la API son vinculantes (tests, agente del Día 3); cambiar `closed` por `resolved` rompería el contrato. |
 | 2026-11-24 | El flujo de estados (§4.2) lo **guía el tablero** con botones; la API sigue aceptando cualquier estado válido. | El test de aceptación 5 pasa de `open` a `in_progress` por `PATCH` y el agente del Día 3 necesitará libertad; un `409` por transición inválida sería un contrato nuevo. |
 | 2026-11-24 | **Varios responsables por ticket** (cambio de requisitos del cliente): campo `assignees: list[str]` en texto libre, en tabla propia `ticket_assignees` (N:M). Se asignan al crear (opcional) y se sustituyen con `PATCH`. Filtro `assignee` en `GET /tickets`, `GET /tickets/tablero` y `GET /`, que devuelve los tickets donde esa persona es **una de** sus responsables. Se aceptan como lista JSON o texto separado por comas. | Marta: "muchas veces hay dos o tres técnicos en el mismo ticket" y "que cada técnico vea lo suyo". Texto libre porque no hay usuarios ni login (fuera de alcance). Tabla propia para filtrar con SQL normal y sin migrar la BD existente. El texto con comas evita JavaScript propio en el formulario (`json-enc` envía el campo como string). |
+| 2026-11-24 | **QA — escenario 1:** `title`, `description`, los responsables y el filtro `assignee` quitan de los extremos, además de los espacios, los caracteres invisibles (categoría Unicode `Cf`: `​`, `⁠`, `﻿`…; y ` `). Un título solo con invisibles da `422` y no llama al LLM. Los invisibles de dentro del texto se conservan (p. ej. el `‍` de los emojis compuestos). | El QA adversarial (`QA_CHECKLIST.md`) encontró que `"​​"` se aceptaba como título (`201`), creaba un ticket "vacío" y gastaba una llamada al LLM. |
+| 2026-11-24 | **QA — escenario 6:** el logger `app` tiene handler propio con nivel `INFO` (cambiable con `TRIAGEBOT_LOG_LEVEL`) y no propaga al root. | Sin handler, Python solo mostraba los `WARNING`: se perdía el detalle de cada intento del clasificador (`intento 1/2 fallido (causa)`), justo lo que hace falta para diagnosticar una key caducada o un timeout. |
 | 2026-11-24 | **Prompt con criterios del histórico y 13 ejemplos (few-shot)** en lugar de enviar los 140 tickets antiguos en cada llamada. Los 140 se etiquetan a mano en `data/tickets_etiquetados.json` y sirven para medir el acierto con `scripts/evaluar_clasificador.py`. Una persona bloqueada con plazo inminente o cliente esperando → `urgent` P1. | Los tickets antiguos no traían etiqueta, así que enviarlos tal cual no enseña el criterio y multiplicaría por ~50 los tokens y la latencia. La regla del plazo inminente la decide el equipo y encaja con el BRIEF ("esto urge porque tenemos demo el viernes"). |
