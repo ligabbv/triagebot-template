@@ -3,20 +3,21 @@
    solo_vencidos (bool) y total_vencidos (int).
 
    Cómo se conecta todo con HTMX:
-   - Al cambiar cualquier <select> del formulario, HTMX hace GET /tickets/tablero?category=..&priority=..&status=..
+   - Al cambiar cualquier filtro, HTMX hace GET /tickets/tablero?category=..&priority=..&status=..&assignee=..
      y sustituye el contenido de #tablero por el HTML devuelto (GET /tickets sigue siendo el JSON de la API).
    - #tablero también se refresca solo cuando alguien lanza el evento "ticket-creado" (lo lanza el formulario
-     de crear tickets, ver SPEC §7.1) o "ticket-actualizado" (lo lanzan los botones de estado de cada
-     fila, SPEC §7.4), respetando los filtros activos gracias a hx-include.
+     de crear tickets, ver SPEC §7.1) o "ticket-actualizado" (lo lanzan los botones de estado y el
+     "Guardar" de responsables de cada fila, SPEC §7.4), respetando los filtros activos gracias a hx-include.
    - hx-disinherit="*" en #tablero: los botones de dentro NO heredan su hx-include="#filtros"; si lo
      heredaran, el PATCH mandaría también category/priority/status de los filtros (422). #}
 <section class="mt-8" aria-labelledby="titulo-tablero">
   <h2 id="titulo-tablero" class="text-xl font-semibold">Tickets</h2>
 
+  {# "submit": pulsar Enter en el campo Responsable filtra sin recargar la página. #}
   <form id="filtros" class="mt-3 flex flex-wrap items-end gap-4"
         hx-get="/tickets/tablero"
         hx-target="#tablero"
-        hx-trigger="change">
+        hx-trigger="change, submit">
     <label class="text-sm">
       <span class="block font-medium text-slate-700">Categoría</span>
       <select name="category" class="mt-1 rounded border border-slate-300 bg-white px-2 py-1.5">
@@ -46,6 +47,19 @@
         {% endfor %}
       </select>
     </label>
+
+    <label class="text-sm">
+      <span class="block font-medium text-slate-700">Responsable</span>
+      <input type="search" name="assignee" list="lista-responsables" maxlength="50"
+             value="{{ filtros.get('assignee', '') }}" placeholder="Todos"
+             class="mt-1 w-44 rounded border border-slate-300 bg-white px-2 py-1.5">
+    </label>
+    {# Sugerencias: nombres ya asignados. También las usa el campo Responsables del formulario. #}
+    <datalist id="lista-responsables">
+      {% for nombre in responsables %}
+      <option value="{{ nombre }}"></option>
+      {% endfor %}
+    </datalist>
 
     <label class="flex items-center gap-2 pb-2 text-sm font-medium text-red-700">
       <input type="checkbox" name="vencidos" value="1" class="h-4 w-4 accent-red-600"

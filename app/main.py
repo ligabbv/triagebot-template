@@ -20,6 +20,7 @@ from app.models import (
     ALLOWED_CATEGORIES,
     ALLOWED_PRIORITIES,
     ALLOWED_STATUSES,
+    MAX_ASSIGNEE_LENGTH,
     Category,
     Classification,
     Priority,
@@ -83,12 +84,26 @@ templates.env.filters["fecha"] = _format_date
 templates.env.filters["dia"] = _format_day
 
 
-def _read_filters(category: str, priority: str, status: str) -> dict[str, str]:
+def _clean_assignee(assignee: str) -> str:
+    """Filtro por responsable: texto libre, espacios normalizados. Vacío = sin filtro."""
+    clean = " ".join(assignee.split())
+    if len(clean) > MAX_ASSIGNEE_LENGTH:
+        raise HTTPException(
+            status_code=422,
+            detail=f"El responsable no puede superar {MAX_ASSIGNEE_LENGTH} caracteres",
+        )
+    return clean
+
+
+def _read_filters(
+    category: str, priority: str, status: str, assignee: str = ""
+) -> dict[str, str]:
     """Filtros del tablero. Un valor vacío ('Todos') significa 'sin filtro', no es un error."""
     raw = {"category": category.strip(), "priority": priority.strip(), "status": status.strip()}
     for name, value in raw.items():
         if value and value not in _ALLOWED_FILTER_VALUES[name]:
             raise HTTPException(status_code=422, detail=f"Valor no válido para '{name}': {value}")
+    raw["assignee"] = _clean_assignee(assignee)
     return {name: value for name, value in raw.items() if value}
 
 
@@ -157,7 +172,9 @@ def health() -> dict[str, str]:
 def create_ticket(payload: TicketCreate) -> dict:
     # Orden: validar (Pydantic, antes de entrar aquí) -> clasificar -> guardar -> responder.
     classification = _classify(payload.title, payload.description)
-    return db.insert_ticket(payload.title, payload.description, **classification)
+    return db.insert_ticket(
+        payload.title, payload.description, assignees=payload.assignees, **classification
+    )
 
 
 @app.get("/tickets", response_model=list[Ticket])
@@ -165,9 +182,17 @@ def list_tickets(
     category: Category | None = None,
     priority: Priority | None = None,
     status: Status | None = None,
+    assignee: str = "",
     overdue: bool | None = None,
 ) -> list[Ticket]:
-    tickets = _as_tickets(db.list_tickets(category=category, priority=priority, status=status))
+    tickets = _as_tickets(
+        db.list_tickets(
+            category=category,
+            priority=priority,
+            status=status,
+            assignee=_clean_assignee(assignee) or None,
+        )
+    )
     if overdue is not None:
         tickets = [ticket for ticket in tickets if ticket.overdue == overdue]
     return tickets
@@ -181,10 +206,11 @@ def tablero(
     category: str = "",
     priority: str = "",
     status: str = "",
+    assignee: str = "",
     vencidos: str = "",
 ) -> HTMLResponse:
     """Fragmento HTML (aviso de vencidos + tabla) para HTMX. El JSON está en GET /tickets."""
-    filtros = _read_filters(category, priority, status)
+    filtros = _read_filters(category, priority, status, assignee)
     solo_vencidos = _read_solo_vencidos(vencidos)
     response = templates.TemplateResponse(
         request, "_tickets_table.html", _board_context(filtros, solo_vencidos)
@@ -216,9 +242,11 @@ def index(
     category: str = "",
     priority: str = "",
     status: str = "",
+    assignee: str = "",
     vencidos: str = "",
 ) -> HTMLResponse:
     # Los filtros llegan por la URL (/?category=bug): así sobreviven a un refresco.
-    filtros = _read_filters(category, priority, status)
+    filtros = _read_filters(category, priority, status, assignee)
     context = _board_context(filtros, _read_solo_vencidos(vencidos))
+    context["responsables"] = db.list_assignees()  # sugerencias del filtro por responsable
     return templates.TemplateResponse(request, "index.html", context)

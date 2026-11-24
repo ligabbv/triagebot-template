@@ -30,11 +30,32 @@ CREATE TABLE IF NOT EXISTS tickets (
 )
 """
 
+# Responsables (SPEC §4): relación N:M, una fila por persona asignada a un ticket.
+ASSIGNEES_SCHEMA = """
+CREATE TABLE IF NOT EXISTS ticket_assignees (
+    ticket_id    INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+    assignee     TEXT    NOT NULL,
+    assignee_key TEXT    NOT NULL,
+    position     INTEGER NOT NULL,
+    PRIMARY KEY (ticket_id, assignee_key)
+)
+"""
+
+
+def assignee_key(name: str) -> str:
+    """Clave para comparar responsables sin mayúsculas, también con tildes y eñes.
+
+    COLLATE NOCASE de SQLite solo ignora mayúsculas en ASCII ('IÑIGO' != 'Iñigo').
+    """
+    return " ".join(name.split()).casefold()
+
 # Fragmentos SQL constantes: los valores siempre van como parámetros `?`.
 _FILTER_CLAUSES = {
     "category": "category = ?",
     "priority": "priority = ?",
     "status": "status = ?",
+    # El ticket tiene a esa persona entre sus responsables (aunque tenga más).
+    "assignee": "id IN (SELECT ticket_id FROM ticket_assignees WHERE assignee_key = ?)",
 }
 _UPDATE_CLAUSES = {
     "status": "status = ?",
@@ -57,6 +78,7 @@ def _connection() -> Iterator[sqlite3.Connection]:
     try:
         # Se crea la tabla también aquí: TestClient(app) sin `with` no ejecuta el arranque.
         conn.execute(SCHEMA)
+        conn.execute(ASSIGNEES_SCHEMA)
         yield conn
         conn.commit()
     finally:
@@ -70,7 +92,43 @@ def _now() -> str:
 def _row_to_dict(row: sqlite3.Row) -> dict:
     ticket = dict(row)
     ticket["tags"] = json.loads(ticket["tags"])
+    ticket["assignees"] = []
     return ticket
+
+
+def _tickets_with_assignees(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> list[dict]:
+    """Convierte filas en dicts y les añade sus responsables (una sola consulta extra)."""
+    tickets = [_row_to_dict(row) for row in rows]
+    if not tickets:
+        return tickets
+    by_id = {ticket["id"]: ticket for ticket in tickets}
+    placeholders = ", ".join("?" for _ in by_id)
+    assigned = conn.execute(
+        "SELECT ticket_id, assignee FROM ticket_assignees "
+        f"WHERE ticket_id IN ({placeholders}) ORDER BY ticket_id, position",
+        list(by_id),
+    ).fetchall()
+    for ticket_id, assignee in assigned:
+        by_id[ticket_id]["assignees"].append(assignee)
+    return tickets
+
+
+def _set_assignees(conn: sqlite3.Connection, ticket_id: int, assignees: list[str]) -> None:
+    """Sustituye la lista completa de responsables de un ticket."""
+    conn.execute("DELETE FROM ticket_assignees WHERE ticket_id = ?", (ticket_id,))
+    conn.executemany(
+        "INSERT INTO ticket_assignees (ticket_id, assignee, assignee_key, position) "
+        "VALUES (?, ?, ?, ?)",
+        [
+            (ticket_id, name, assignee_key(name), position)
+            for position, name in enumerate(assignees)
+        ],
+    )
+
+
+def _fetch_one(conn: sqlite3.Connection, ticket_id: int) -> dict | None:
+    row = conn.execute("SELECT * FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
+    return _tickets_with_assignees(conn, [row])[0] if row else None
 
 
 def init_db() -> None:
@@ -80,7 +138,12 @@ def init_db() -> None:
 
 
 def insert_ticket(
-    title: str, description: str, category: str, priority: str, tags: list[str]
+    title: str,
+    description: str,
+    category: str,
+    priority: str,
+    tags: list[str],
+    assignees: list[str] | None = None,
 ) -> dict:
     now = _now()
     tags_json = json.dumps(tags, ensure_ascii=False)
@@ -91,23 +154,31 @@ def insert_ticket(
             "VALUES (?, ?, ?, ?, ?, 'open', ?, ?)",
             (title, description, category, priority, tags_json, now, now),
         )
-        row = conn.execute("SELECT * FROM tickets WHERE id = ?", (cursor.lastrowid,)).fetchone()
-    return _row_to_dict(row)
+        _set_assignees(conn, cursor.lastrowid, assignees or [])
+        ticket = _fetch_one(conn, cursor.lastrowid)
+    return ticket
 
 
 def get_ticket(ticket_id: int) -> dict | None:
     try:
         with _connection() as conn:
-            row = conn.execute("SELECT * FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
+            return _fetch_one(conn, ticket_id)
     except OverflowError:  # id mayor que un entero de 64 bits: no puede existir
         return None
-    return _row_to_dict(row) if row else None
 
 
 def list_tickets(
-    category: str | None = None, priority: str | None = None, status: str | None = None
+    category: str | None = None,
+    priority: str | None = None,
+    status: str | None = None,
+    assignee: str | None = None,
 ) -> list[dict]:
-    filters = {"category": category, "priority": priority, "status": status}
+    filters = {
+        "category": category,
+        "priority": priority,
+        "status": status,
+        "assignee": assignee_key(assignee) if assignee else None,
+    }
     clauses = [_FILTER_CLAUSES[name] for name, value in filters.items() if value is not None]
     params = [value for value in filters.values() if value is not None]
 
@@ -118,11 +189,21 @@ def list_tickets(
 
     with _connection() as conn:
         rows = conn.execute(query, params).fetchall()
-    return [_row_to_dict(row) for row in rows]
+        return _tickets_with_assignees(conn, rows)
+
+
+def list_assignees() -> list[str]:
+    """Nombres ya asignados a algún ticket (para sugerirlos en el filtro), sin duplicados."""
+    with _connection() as conn:
+        rows = conn.execute(
+            "SELECT MIN(assignee) AS assignee FROM ticket_assignees "
+            "GROUP BY assignee_key ORDER BY assignee_key"
+        ).fetchall()
+    return [row["assignee"] for row in rows]
 
 
 def update_ticket(ticket_id: int, changes: dict) -> dict | None:
-    """Actualiza status y/o priority. Devuelve None si el ticket no existe."""
+    """Actualiza status, priority y/o assignees. Devuelve None si el ticket no existe."""
     clauses = [clause for field, clause in _UPDATE_CLAUSES.items() if field in changes]
     params: list = [changes[field] for field in _UPDATE_CLAUSES if field in changes]
     clauses.append("updated_at = ?")
@@ -136,7 +217,8 @@ def update_ticket(ticket_id: int, changes: dict) -> dict | None:
             )
             if cursor.rowcount == 0:
                 return None
-            row = conn.execute("SELECT * FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
+            if "assignees" in changes:
+                _set_assignees(conn, ticket_id, changes["assignees"])
+            return _fetch_one(conn, ticket_id)
     except OverflowError:
         return None
-    return _row_to_dict(row)

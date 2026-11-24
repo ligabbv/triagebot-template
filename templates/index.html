@@ -46,6 +46,15 @@
                     class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"></textarea>
         </div>
 
+        <div>
+          <label for="assignees" class="block text-sm font-medium">
+            Responsables <span class="font-normal text-slate-500">(opcional, separados por comas)</span>
+          </label>
+          <input id="assignees" name="assignees" type="text" list="lista-responsables"
+                 placeholder="Ej.: Ana, Luis"
+                 class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+        </div>
+
         <div class="flex items-center gap-4">
           <button type="submit"
                   class="rounded-md bg-indigo-600 px-4 py-2 font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">
@@ -73,7 +82,7 @@
     (function () {
       const form = document.getElementById("form-ticket");
       const mensaje = document.getElementById("form-mensaje");
-      const CAMPOS = { title: "título", description: "descripción" };
+      const CAMPOS = { title: "título", description: "descripción", assignees: "responsables" };
       const LIMITES = { title: 200, description: 5000 };
 
       function mostrar(texto, esError) {
@@ -91,6 +100,10 @@
           }
           if (err.type === "string_too_long") {
             return "El campo " + nombre + " no puede superar " + LIMITES[campo] + " caracteres.";
+          }
+          if (err.type === "value_error" && err.msg) {
+            // Mensajes ya escritos en castellano en models.py (p. ej. límites de responsables).
+            return err.msg.replace(/^Value error, /, "") + ".";
           }
           return "El campo " + nombre + " no es válido.";
         }).join(" ");

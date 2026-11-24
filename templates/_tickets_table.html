@@ -52,6 +52,7 @@
       <th class="px-3 py-2 text-left text-sm font-semibold">Categoría</th>
       <th class="px-3 py-2 text-left text-sm font-semibold">Prioridad</th>
       <th class="px-3 py-2 text-left text-sm font-semibold">Etiquetas</th>
+      <th class="px-3 py-2 text-left text-sm font-semibold">Responsables</th>
       <th class="px-3 py-2 text-left text-sm font-semibold">Estado</th>
       <th class="px-3 py-2 text-left text-sm font-semibold">Vence</th>
       <th class="px-3 py-2 text-left text-sm font-semibold">Creado (UTC)</th>
@@ -81,6 +82,32 @@
         {% endfor %}
       </td>
       <td class="px-3 py-2 text-sm">
+        {% for persona in ticket.assignees %}
+        <span class="mr-1 mb-1 inline-block rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-800">{{ persona }}</span>
+        {% else %}
+        <span class="text-xs italic text-slate-400">Sin asignar</span>
+        {% endfor %}
+        {# Editar responsables: PATCH /tickets/{id} con la lista completa; el tablero se refresca con "ticket-actualizado". #}
+        <details class="mt-1">
+          <summary class="cursor-pointer text-xs text-slate-500 hover:text-slate-800">Editar</summary>
+          <form class="mt-1 flex gap-1"
+                hx-patch="/tickets/{{ ticket.id }}"
+                hx-ext="json-enc"
+                hx-swap="none"
+                hx-disabled-elt="find button"
+                hx-on::after-request="if (event.detail.successful) { htmx.trigger(document.body, 'ticket-actualizado') } else { alert('No se han podido guardar los responsables. Máximo 10 nombres de hasta 50 caracteres.') }">
+            <input type="text" name="assignees" list="lista-responsables"
+                   value="{{ ticket.assignees | join(', ') }}" placeholder="Ana, Luis"
+                   aria-label="Responsables del ticket {{ ticket.id }} (separados por comas)"
+                   class="w-40 rounded border border-slate-300 px-1.5 py-0.5 text-xs">
+            <button type="submit"
+                    class="rounded bg-indigo-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50">
+              Guardar
+            </button>
+          </form>
+        </details>
+      </td>
+      <td class="px-3 py-2 text-sm">
         <span class="inline-block rounded-full px-2 py-0.5 text-xs font-semibold {{ status_classes.get(ticket.status, 'bg-slate-200 text-slate-600') }}">
           {{ STATUS_LABELS.get(ticket.status, ticket.status) }}
         </span>
@@ -107,7 +134,7 @@
     </tr>
     {% else %}
     <tr>
-      <td colspan="9" class="px-3 py-8 text-center text-sm text-slate-500">No hay tickets.</td>
+      <td colspan="10" class="px-3 py-8 text-center text-sm text-slate-500">No hay tickets.</td>
     </tr>
     {% endfor %}
   </tbody>
