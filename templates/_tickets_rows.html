@@ -1,0 +1,35 @@
+{% set colores_categoria = {
+  "bug": "bg-orange-100 text-orange-800",
+  "feature_request": "bg-blue-100 text-blue-800",
+  "question": "bg-slate-100 text-slate-700",
+  "urgent": "bg-red-100 text-red-800",
+} %}
+{% set colores_prioridad = {
+  "P1": "bg-red-600 text-white",
+  "P2": "bg-amber-500 text-white",
+  "P3": "bg-slate-400 text-white",
+} %}
+{% set nombres_estado = {"open": "Abierto", "in_progress": "En curso", "closed": "Cerrado"} %}
+{% for ticket in tickets %}
+<tr id="ticket-{{ ticket.id }}">
+  <td class="px-3 py-2 text-sm text-slate-500">{{ ticket.id }}</td>
+  <td class="px-3 py-2 text-sm font-medium">{{ ticket.title }}</td>
+  <td class="px-3 py-2 text-sm">
+    <span class="rounded px-2 py-0.5 text-xs font-medium {{ colores_categoria.get(ticket.category, '') }}">{{ ticket.category }}</span>
+  </td>
+  <td class="px-3 py-2 text-sm">
+    <span class="rounded px-2 py-0.5 text-xs font-bold {{ colores_prioridad.get(ticket.priority, '') }}">{{ ticket.priority }}</span>
+  </td>
+  <td class="px-3 py-2 text-sm">
+    {% for tag in ticket.tags %}
+    <span class="mr-1 inline-block rounded-full bg-indigo-50 px-2 py-0.5 text-xs text-indigo-700">{{ tag }}</span>
+    {% endfor %}
+  </td>
+  <td class="px-3 py-2 text-sm">{{ nombres_estado.get(ticket.status, ticket.status) }}</td>
+  <td class="px-3 py-2 text-sm text-slate-500 whitespace-nowrap">{{ ticket.created_at | fecha }}</td>
+</tr>
+{% else %}
+<tr>
+  <td colspan="7" class="px-3 py-6 text-center text-sm text-slate-500">No hay tickets</td>
+</tr>
+{% endfor %}
