@@ -2,29 +2,27 @@
    GET /tickets/tablero (HTMX).
    Contexto: tickets = lista de Ticket (con due_at y overdue calculados, SPEC §4.1),
    total_vencidos (int) y solo_vencidos (bool).
-   Jinja2 escapa el HTML automáticamente: no usar |safe con datos de usuario. #}
+   Jinja2 escapa el HTML automáticamente: no usar |safe con datos de usuario.
+   Las clases .chip, .punto y .accion están definidas en index.html. #}
 {% set category_classes = {
-  "bug": "bg-red-100 text-red-800",
-  "feature_request": "bg-blue-100 text-blue-800",
-  "question": "bg-slate-200 text-slate-800",
-  "urgent": "bg-orange-200 text-orange-900"
+  "bug": "bg-rojo-suave text-rojo",
+  "feature_request": "bg-acento-suave text-acento",
+  "question": "bg-fondo text-tinta/80",
+  "urgent": "bg-rojo-vivo text-white"
 } %}
-{% set priority_classes = {
-  "P1": "bg-red-600 text-white",
-  "P2": "bg-amber-400 text-amber-950",
-  "P3": "bg-slate-300 text-slate-800"
-} %}
+{% set priority_dots = {"P1": "bg-rojo-vivo", "P2": "bg-naranja-vivo", "P3": "bg-linea"} %}
 {% set status_classes = {
-  "open": "bg-slate-200 text-slate-800",
-  "in_progress": "bg-sky-100 text-sky-800",
-  "closed": "bg-emerald-100 text-emerald-800"
+  "open": "bg-fondo text-tinta/80",
+  "in_progress": "bg-acento-suave text-acento",
+  "closed": "bg-verde-suave text-verde"
 } %}
+{% set status_dots = {"open": "bg-gris/60", "in_progress": "bg-acento", "closed": "bg-verde"} %}
 
 {# Botón de cambio de estado (SPEC §4.2 y §7.4): PATCH /tickets/{id} con {"status": ...} en JSON.
    Si va bien lanza "ticket-actualizado" y #tablero se recarga con los filtros activos. #}
 {% macro accion(ticket_id, nuevo_estado, texto, clases) %}
 <button type="button"
-        class="rounded px-2 py-1 text-xs font-semibold disabled:opacity-50 {{ clases }}"
+        class="accion {{ clases }}"
         hx-patch="/tickets/{{ ticket_id }}"
         hx-ext="json-enc"
         hx-vals='{"status": "{{ nuevo_estado }}"}'
@@ -36,106 +34,116 @@
 {% endmacro %}
 
 {% if total_vencidos %}
-<div class="mb-3 flex flex-wrap items-center gap-3 rounded-md bg-red-50 px-4 py-2 text-sm text-red-800 ring-1 ring-red-200" role="status">
-  <span class="font-semibold">⚠ {{ total_vencidos }} {{ 'ticket vencido' if total_vencidos == 1 else 'tickets vencidos' }}</span>
+<div class="mb-4 flex flex-wrap items-center gap-3 rounded-2xl bg-rojo-suave px-5 py-3 text-[13px] text-rojo" role="status">
+  <span class="punto h-2 w-2 bg-rojo-vivo"></span>
+  <span class="font-semibold">{{ total_vencidos }} {{ 'ticket vencido' if total_vencidos == 1 else 'tickets vencidos' }}</span>
   {% if not solo_vencidos %}
-  <a href="/?vencidos=1" class="underline hover:text-red-950">Ver solo vencidos</a>
+  <a href="/?vencidos=1" class="font-medium hover:underline">Ver solo vencidos ›</a>
   {% endif %}
 </div>
 {% endif %}
 
-<table class="min-w-full divide-y divide-slate-200 bg-white shadow-sm ring-1 ring-slate-200 rounded-lg overflow-hidden">
-  <thead class="bg-slate-100">
-    <tr>
-      <th class="px-3 py-2 text-left text-sm font-semibold">ID</th>
-      <th class="px-3 py-2 text-left text-sm font-semibold">Título</th>
-      <th class="px-3 py-2 text-left text-sm font-semibold">Categoría</th>
-      <th class="px-3 py-2 text-left text-sm font-semibold">Prioridad</th>
-      <th class="px-3 py-2 text-left text-sm font-semibold">Etiquetas</th>
-      <th class="px-3 py-2 text-left text-sm font-semibold">Responsables</th>
-      <th class="px-3 py-2 text-left text-sm font-semibold">Estado</th>
-      <th class="px-3 py-2 text-left text-sm font-semibold">Vence</th>
-      <th class="px-3 py-2 text-left text-sm font-semibold">Creado (UTC)</th>
-      <th class="px-3 py-2 text-left text-sm font-semibold">Acciones</th>
-    </tr>
-  </thead>
-  <tbody id="tickets-table-body" class="divide-y divide-slate-100">
-    {% for ticket in tickets %}
-    <tr class="{{ 'bg-red-50 hover:bg-red-100' if ticket.overdue else 'hover:bg-slate-50' }}">
-      <td class="px-3 py-2 text-sm text-slate-500">#{{ ticket.id }}</td>
-      <td class="px-3 py-2 text-sm font-medium">{{ ticket.title }}</td>
-      <td class="px-3 py-2 text-sm">
-        <span class="inline-block rounded-full px-2 py-0.5 text-xs font-semibold {{ category_classes.get(ticket.category, 'bg-slate-200 text-slate-800') }}">
-          {{ CATEGORY_LABELS.get(ticket.category, ticket.category) }}
-        </span>
-      </td>
-      <td class="px-3 py-2 text-sm">
-        <span class="inline-block rounded px-2 py-0.5 text-xs font-bold {{ priority_classes.get(ticket.priority, 'bg-slate-300 text-slate-800') }}">
-          {{ PRIORITY_LABELS.get(ticket.priority, ticket.priority) }}
-        </span>
-      </td>
-      <td class="px-3 py-2 text-sm">
-        {% for tag in ticket.tags %}
-        <span class="mr-1 inline-block rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-700">{{ tag }}</span>
+<div class="tarjeta overflow-hidden">
+  <div class="overflow-x-auto">
+    <table class="min-w-full">
+      <thead>
+        <tr class="border-b border-black/5 text-left text-xs font-medium text-gris">
+          <th class="py-4 pl-6 pr-3 font-medium">ID</th>
+          <th class="px-3 py-4 font-medium">Título</th>
+          <th class="px-3 py-4 font-medium">Categoría</th>
+          <th class="px-3 py-4 font-medium">Prioridad</th>
+          <th class="px-3 py-4 font-medium">Etiquetas</th>
+          <th class="px-3 py-4 font-medium">Responsables</th>
+          <th class="px-3 py-4 font-medium">Estado</th>
+          <th class="px-3 py-4 font-medium">Vence</th>
+          <th class="px-3 py-4 font-medium">Creado (UTC)</th>
+          <th class="py-4 pl-3 pr-6 font-medium">Acciones</th>
+        </tr>
+      </thead>
+      <tbody id="tickets-table-body" class="divide-y divide-black/5">
+        {% for ticket in tickets %}
+        <tr class="align-top text-[13px] transition-colors {{ 'bg-rojo-suave/60 hover:bg-rojo-suave' if ticket.overdue else 'hover:bg-fondo/60' }}">
+          <td class="py-4 pl-6 pr-3 tabular-nums text-gris">{{ ticket.id }}</td>
+          <td class="min-w-[11rem] max-w-xs px-3 py-4 text-[14px] font-medium leading-snug text-tinta">{{ ticket.title }}</td>
+          <td class="px-3 py-4">
+            <span class="chip {{ category_classes.get(ticket.category, 'bg-fondo text-tinta/80') }}">
+              {{ CATEGORY_LABELS.get(ticket.category, ticket.category) }}
+            </span>
+          </td>
+          <td class="whitespace-nowrap px-3 py-4 text-tinta">
+            <span class="inline-flex items-center gap-2">
+              <span class="punto h-2 w-2 {{ priority_dots.get(ticket.priority, 'bg-linea') }}"></span>
+              {{ PRIORITY_LABELS.get(ticket.priority, ticket.priority) }}
+            </span>
+          </td>
+          <td class="px-3 py-4">
+            <div class="flex max-w-[14rem] flex-wrap gap-1">
+              {% for tag in ticket.tags %}
+              <span class="rounded-md bg-fondo px-1.5 py-0.5 text-[11px] text-gris">{{ tag }}</span>
+              {% else %}
+              <span class="text-linea">—</span>
+              {% endfor %}
+            </div>
+          </td>
+          <td class="px-3 py-4">
+            <div class="flex max-w-[12rem] flex-wrap gap-1">
+              {% for persona in ticket.assignees %}
+              <span class="chip bg-tinta/[0.06] text-tinta">{{ persona }}</span>
+              {% else %}
+              <span class="text-xs text-[#a1a1a6]">Sin asignar</span>
+              {% endfor %}
+            </div>
+            {# Editar responsables: PATCH /tickets/{id} con la lista completa; el tablero se refresca con "ticket-actualizado". #}
+            <details class="group mt-1.5">
+              <summary class="cursor-pointer list-none text-xs text-acento hover:underline [&::-webkit-details-marker]:hidden">
+                Editar<span class="group-open:hidden"> ›</span>
+              </summary>
+              <form class="mt-2 flex gap-1.5"
+                    hx-patch="/tickets/{{ ticket.id }}"
+                    hx-ext="json-enc"
+                    hx-swap="none"
+                    hx-disabled-elt="find button"
+                    hx-on::after-request="if (event.detail.successful) { htmx.trigger(document.body, 'ticket-actualizado') } else { alert('No se han podido guardar los responsables. Máximo 10 nombres de hasta 50 caracteres.') }">
+                <input type="text" name="assignees" list="lista-responsables"
+                       value="{{ ticket.assignees | join(', ') }}" placeholder="Ana, Luis"
+                       aria-label="Responsables del ticket {{ ticket.id }} (separados por comas)"
+                       class="w-40 rounded-lg border border-transparent bg-fondo px-2.5 py-1.5 text-xs focus:border-acento focus:bg-white focus:outline-none focus:ring-4 focus:ring-acento/15">
+                <button type="submit" class="accion bg-acento text-white hover:bg-acento-hover">Guardar</button>
+              </form>
+            </details>
+          </td>
+          <td class="px-3 py-4">
+            <span class="chip {{ status_classes.get(ticket.status, 'bg-fondo text-tinta/80') }}">
+              <span class="punto {{ status_dots.get(ticket.status, 'bg-gris/60') }}"></span>
+              {{ STATUS_LABELS.get(ticket.status, ticket.status) }}
+            </span>
+          </td>
+          <td class="whitespace-nowrap px-3 py-4">
+            <span class="tabular-nums {{ 'font-semibold text-rojo' if ticket.overdue else 'text-tinta/80' }}">{{ ticket.due_at | dia }}</span>
+            {% if ticket.overdue %}
+            <span class="chip ml-1 bg-rojo-vivo px-2 py-0.5 text-[11px] text-white">Vencido</span>
+            {% endif %}
+          </td>
+          <td class="whitespace-nowrap px-3 py-4 tabular-nums text-gris">{{ ticket.created_at | fecha }}</td>
+          <td class="whitespace-nowrap py-4 pl-3 pr-6">
+            <div class="flex gap-1.5">
+              {% if ticket.status == "open" %}
+                {{ accion(ticket.id, "in_progress", "Empezar", "bg-acento-suave text-acento hover:bg-acento hover:text-white") }}
+                {{ accion(ticket.id, "closed", "Resolver", "bg-verde-suave text-verde hover:bg-verde hover:text-white") }}
+              {% elif ticket.status == "in_progress" %}
+                {{ accion(ticket.id, "closed", "Resolver", "bg-verde-suave text-verde hover:bg-verde hover:text-white") }}
+              {% else %}
+                {{ accion(ticket.id, "open", "Reabrir", "bg-fondo text-tinta hover:bg-linea/60") }}
+              {% endif %}
+            </div>
+          </td>
+        </tr>
         {% else %}
-        <span class="text-slate-400">—</span>
+        <tr>
+          <td colspan="10" class="px-6 py-16 text-center text-[15px] text-gris">No hay tickets.</td>
+        </tr>
         {% endfor %}
-      </td>
-      <td class="px-3 py-2 text-sm">
-        {% for persona in ticket.assignees %}
-        <span class="mr-1 mb-1 inline-block rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-800">{{ persona }}</span>
-        {% else %}
-        <span class="text-xs italic text-slate-400">Sin asignar</span>
-        {% endfor %}
-        {# Editar responsables: PATCH /tickets/{id} con la lista completa; el tablero se refresca con "ticket-actualizado". #}
-        <details class="mt-1">
-          <summary class="cursor-pointer text-xs text-slate-500 hover:text-slate-800">Editar</summary>
-          <form class="mt-1 flex gap-1"
-                hx-patch="/tickets/{{ ticket.id }}"
-                hx-ext="json-enc"
-                hx-swap="none"
-                hx-disabled-elt="find button"
-                hx-on::after-request="if (event.detail.successful) { htmx.trigger(document.body, 'ticket-actualizado') } else { alert('No se han podido guardar los responsables. Máximo 10 nombres de hasta 50 caracteres.') }">
-            <input type="text" name="assignees" list="lista-responsables"
-                   value="{{ ticket.assignees | join(', ') }}" placeholder="Ana, Luis"
-                   aria-label="Responsables del ticket {{ ticket.id }} (separados por comas)"
-                   class="w-40 rounded border border-slate-300 px-1.5 py-0.5 text-xs">
-            <button type="submit"
-                    class="rounded bg-indigo-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50">
-              Guardar
-            </button>
-          </form>
-        </details>
-      </td>
-      <td class="px-3 py-2 text-sm">
-        <span class="inline-block rounded-full px-2 py-0.5 text-xs font-semibold {{ status_classes.get(ticket.status, 'bg-slate-200 text-slate-600') }}">
-          {{ STATUS_LABELS.get(ticket.status, ticket.status) }}
-        </span>
-      </td>
-      <td class="px-3 py-2 text-sm whitespace-nowrap">
-        <span class="{{ 'font-semibold text-red-700' if ticket.overdue else 'text-slate-600' }}">{{ ticket.due_at | dia }}</span>
-        {% if ticket.overdue %}
-        <span class="ml-1 inline-block rounded bg-red-600 px-1.5 py-0.5 text-xs font-bold text-white">Vencido</span>
-        {% endif %}
-      </td>
-      <td class="px-3 py-2 text-sm text-slate-500 whitespace-nowrap">{{ ticket.created_at | fecha }}</td>
-      <td class="px-3 py-2 text-sm whitespace-nowrap">
-        <div class="flex gap-1">
-          {% if ticket.status == "open" %}
-            {{ accion(ticket.id, "in_progress", "Empezar", "bg-sky-600 text-white hover:bg-sky-700") }}
-            {{ accion(ticket.id, "closed", "Resolver", "bg-emerald-600 text-white hover:bg-emerald-700") }}
-          {% elif ticket.status == "in_progress" %}
-            {{ accion(ticket.id, "closed", "Resolver", "bg-emerald-600 text-white hover:bg-emerald-700") }}
-          {% else %}
-            {{ accion(ticket.id, "open", "Reabrir", "bg-white text-slate-700 ring-1 ring-slate-300 hover:bg-slate-100") }}
-          {% endif %}
-        </div>
-      </td>
-    </tr>
-    {% else %}
-    <tr>
-      <td colspan="10" class="px-3 py-8 text-center text-sm text-slate-500">No hay tickets.</td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
+      </tbody>
+    </table>
+  </div>
+</div>

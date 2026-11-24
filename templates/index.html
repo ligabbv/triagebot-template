@@ -4,78 +4,156 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>TriageBot</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    // Sistema visual: tipografía del sistema (Inter como alternativa en Windows),
+    // grises neutros, un único azul de acento y colores de estado suaves.
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ["-apple-system", "BlinkMacSystemFont", "Inter", "Segoe UI", "Helvetica Neue", "Arial", "sans-serif"],
+          },
+          colors: {
+            tinta: "#1d1d1f",
+            gris: "#6e6e73",
+            fondo: "#f5f5f7",
+            linea: "#d2d2d7",
+            acento: { DEFAULT: "#0071e3", hover: "#0077ed", suave: "#e8f2fd" },
+            rojo: { DEFAULT: "#d70015", vivo: "#ff3b30", suave: "#fff2f2" },
+            verde: { DEFAULT: "#248a3d", suave: "#eaf7ee" },
+            naranja: { DEFAULT: "#c93400", vivo: "#ff9500", suave: "#fff4e5" },
+          },
+          boxShadow: {
+            tarjeta: "0 2px 6px rgba(0,0,0,0.02), 0 12px 32px rgba(0,0,0,0.05)",
+          },
+        },
+      },
+    };
+  </script>
+  <style type="text/tailwindcss">
+    @layer components {
+      .tarjeta { @apply rounded-[28px] bg-white shadow-tarjeta; }
+      .etiqueta-campo { @apply mb-2 block text-[13px] font-medium text-gris; }
+      .campo {
+        @apply w-full rounded-xl border border-transparent bg-fondo px-4 py-3 text-[15px] text-tinta
+               placeholder:text-[#a1a1a6] transition focus:border-acento focus:bg-white
+               focus:outline-none focus:ring-4 focus:ring-acento/15;
+      }
+      .boton-principal {
+        @apply inline-flex items-center justify-center rounded-full bg-acento px-6 py-3 text-[15px]
+               font-medium text-white transition hover:bg-acento-hover active:scale-[0.98]
+               disabled:cursor-not-allowed disabled:opacity-40;
+      }
+      .selector {
+        @apply cursor-pointer appearance-none rounded-full border border-linea/70 bg-white py-2 pl-4 pr-9
+               text-[13px] font-medium text-tinta transition hover:border-gris/50
+               focus:border-acento focus:outline-none focus:ring-4 focus:ring-acento/15;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%236e6e73' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: right 14px center;
+      }
+      .chip { @apply inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium; }
+      .punto { @apply h-1.5 w-1.5 shrink-0 rounded-full; }
+      .accion { @apply rounded-full px-3 py-1.5 text-xs font-medium transition active:scale-[0.97] disabled:opacity-40; }
+    }
+  </style>
   <script src="https://unpkg.com/htmx.org@2.0.4"></script>
   <script src="https://unpkg.com/htmx-ext-json-enc@2.0.1/json-enc.js"></script>
   <style>
     /* El indicador solo se ve mientras HTMX espera la respuesta. */
     .htmx-indicator { display: none; }
     .htmx-request .htmx-indicator, .htmx-request.htmx-indicator { display: inline-flex; }
+    body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
   </style>
 </head>
-<body class="bg-slate-50 text-slate-900">
-  <main class="mx-auto max-w-6xl p-6 space-y-8">
-    <header>
-      <h1 class="text-3xl font-bold">TriageBot</h1>
-      <p class="mt-2 text-slate-600">Tablero de incidencias con clasificación automática por IA.</p>
+<body class="bg-fondo font-sans text-tinta">
+  <!-- Barra superior translúcida -->
+  <nav class="sticky top-0 z-50 border-b border-black/5 bg-white/70 backdrop-blur-xl backdrop-saturate-150">
+    <div class="mx-auto flex h-12 max-w-6xl items-center justify-between px-6">
+      <a href="/" class="flex items-center gap-2 text-[15px] font-semibold tracking-tight">
+        <span class="flex h-6 w-6 items-center justify-center rounded-md bg-tinta text-[11px] font-bold text-white">T</span>
+        TriageBot
+      </a>
+      <div class="flex items-center gap-6 text-xs text-tinta/80">
+        <a href="#nuevo" class="transition hover:text-tinta">Nuevo ticket</a>
+        <a href="#titulo-tablero" class="transition hover:text-tinta">Tablero</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="mx-auto max-w-6xl px-6 pb-24">
+    <!-- Cabecera -->
+    <header class="pb-14 pt-20 text-center">
+      <p class="text-sm font-semibold text-acento">Soporte · Triage con IA</p>
+      <h1 class="mx-auto mt-3 max-w-3xl text-5xl font-semibold tracking-tight md:text-6xl">
+        Cada incidencia, en su sitio.
+      </h1>
+      <p class="mx-auto mt-5 max-w-2xl text-xl leading-relaxed text-gris">
+        TriageBot clasifica cada ticket en segundos para que el equipo empiece el día
+        resolviendo, no ordenando.
+      </p>
     </header>
 
     <!-- BLOQUE 1: formulario para crear tickets. Al crear un ticket lanza el evento
          "ticket-creado" para que el tablero se refresque (SPEC §7.1). -->
-    <section class="rounded-lg bg-white p-6 shadow-sm ring-1 ring-slate-200">
-      <h2 class="text-xl font-semibold">Nuevo ticket</h2>
+    <section id="nuevo" class="tarjeta mx-auto max-w-3xl scroll-mt-20 p-8 md:p-12">
+      <h2 class="text-[28px] font-semibold tracking-tight">Nuevo ticket</h2>
+      <p class="mt-1 text-[15px] text-gris">Describe el problema. La categoría y la prioridad las pone la IA.</p>
 
       <form id="form-ticket"
-            class="mt-4 space-y-4"
+            class="mt-8 space-y-6"
             hx-post="/tickets"
             hx-ext="json-enc"
             hx-swap="none"
             hx-indicator="#clasificando"
             hx-disabled-elt="find button">
         <div>
-          <label for="title" class="block text-sm font-medium">Título</label>
+          <label for="title" class="etiqueta-campo">Título</label>
           <input id="title" name="title" type="text" required maxlength="200"
-                 placeholder="Ej.: La app no carga"
-                 class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                 placeholder="Ej.: La app no carga" class="campo">
         </div>
 
         <div>
-          <label for="description" class="block text-sm font-medium">Descripción</label>
+          <label for="description" class="etiqueta-campo">Descripción</label>
           <textarea id="description" name="description" rows="4" required maxlength="5000"
-                    placeholder="Describe el problema o la petición"
-                    class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"></textarea>
+                    placeholder="Describe el problema o la petición" class="campo resize-y"></textarea>
         </div>
 
         <div>
-          <label for="assignees" class="block text-sm font-medium">
-            Responsables <span class="font-normal text-slate-500">(opcional, separados por comas)</span>
+          <label for="assignees" class="etiqueta-campo">
+            Responsables <span class="font-normal text-[#a1a1a6]">· opcional, separados por comas</span>
           </label>
           <input id="assignees" name="assignees" type="text" list="lista-responsables"
-                 placeholder="Ej.: Ana, Luis"
-                 class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                 placeholder="Ej.: Ana, Luis" class="campo">
         </div>
 
-        <div class="flex items-center gap-4">
-          <button type="submit"
-                  class="rounded-md bg-indigo-600 px-4 py-2 font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">
-            Crear ticket
-          </button>
-          <span id="clasificando" class="htmx-indicator items-center gap-2 text-sm text-slate-600">
-            <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" class="opacity-25"></circle>
-              <path d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" class="opacity-75"></path>
+        <div class="flex flex-wrap items-center gap-5 pt-2">
+          <button type="submit" class="boton-principal">Crear ticket</button>
+          <span id="clasificando" class="htmx-indicator items-center gap-2 text-sm text-gris">
+            <svg class="h-4 w-4 animate-spin text-acento" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" class="opacity-20"></circle>
+              <path d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="3" stroke-linecap="round"></path>
             </svg>
             Clasificando…
           </span>
+          <p id="form-mensaje" role="alert" class="hidden text-sm"></p>
         </div>
-
-        <p id="form-mensaje" role="alert" class="hidden text-sm"></p>
       </form>
     </section>
 
     <!-- BLOQUES 2 y 3: filtros + tablero -->
     {% include "_filtros.html" %}
   </main>
+
+  <footer class="border-t border-black/5">
+    <div class="mx-auto max-w-6xl px-6 py-6 text-xs text-gris">
+      TriageBot · Herramienta interna de Soporte · Clasificación automática con IA
+    </div>
+  </footer>
 
   <script>
     // Tras POST /tickets: limpiar el formulario si ha ido bien o mostrar un error legible.
@@ -87,7 +165,7 @@
 
       function mostrar(texto, esError) {
         mensaje.textContent = texto;
-        mensaje.className = "text-sm " + (esError ? "text-red-700" : "text-green-700");
+        mensaje.className = "text-sm font-medium " + (esError ? "text-rojo" : "text-verde");
       }
 
       function textoError(detalle) {
