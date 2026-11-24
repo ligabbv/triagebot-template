@@ -20,13 +20,17 @@ from app.models import (
     ALLOWED_CATEGORIES,
     ALLOWED_PRIORITIES,
     ALLOWED_STATUSES,
+    CATEGORIES,
     MAX_ASSIGNEE_LENGTH,
+    PRIORITIES,
+    STATUSES,
     Category,
     Classification,
     Priority,
     Status,
     Ticket,
     TicketCreate,
+    TicketStats,
     TicketUpdate,
 )
 
@@ -198,7 +202,20 @@ def list_tickets(
     return tickets
 
 
-# OJO con el orden: "/tickets/tablero" tiene que declararse ANTES que "/tickets/{ticket_id}".
+@app.get("/tickets/stats", response_model=TicketStats)
+def ticket_stats() -> TicketStats:
+    """Conteos para informes (SPEC §5). Siempre todas las claves de cada enum, con 0 si no hay."""
+    counts = db.count_tickets()
+    return TicketStats(
+        total=counts["total"],
+        by_category={value: counts["category"].get(value, 0) for value in CATEGORIES},
+        by_priority={value: counts["priority"].get(value, 0) for value in PRIORITIES},
+        by_status={value: counts["status"].get(value, 0) for value in STATUSES},
+    )
+
+
+# OJO con el orden: "/tickets/stats" y "/tickets/tablero" tienen que declararse ANTES que
+# "/tickets/{ticket_id}".
 # Si no, FastAPI intentaría convertir "tablero" a entero y respondería 422.
 @app.get("/tickets/tablero", response_class=HTMLResponse)
 def tablero(

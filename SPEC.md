@@ -235,12 +235,13 @@ CREATE TABLE IF NOT EXISTS ticket_assignees (
 
 ## 5. Endpoints HTTP
 
-Seis endpoints. Todos viven en `app.main`. **JSON y HTML están separados por ruta**,
+Siete endpoints. Todos viven en `app.main`. **JSON y HTML están separados por ruta**,
 cada uno con un propósito claro (no se decide por cabeceras):
 
 | Ruta | Devuelve | Para qué sirve |
 |------|----------|----------------|
 | `GET /tickets` (y `POST`, `GET/PATCH /tickets/{id}`) | **JSON** | La API: tests, scripts y el agente del Día 3 |
+| `GET /tickets/stats` | **JSON** | Conteos para informes (total, por categoría, prioridad y estado) |
 | `GET /tickets/tablero` | **HTML** (solo la tabla) | Lo que pide HTMX para refrescar el tablero |
 | `GET /` | **HTML** (página completa) | Lo que abre el usuario en el navegador |
 
@@ -317,6 +318,30 @@ GET /tickets?overdue=true
 - **Response `200 OK`**: lista JSON de tickets (lista vacía `[]` si no hay).
 - **Response `422`**: si un filtro trae un valor fuera de su enum
   (p. ej. `?priority=P9`) o `overdue` no es booleano.
+
+### `GET /tickets/stats`
+
+Conteos de **todos** los tickets, para informes (petición de Marta para la
+presentación interna). Solo JSON, sin frontend. Sin parámetros.
+
+**Response `200 OK`**:
+```json
+{
+  "total": 47,
+  "by_category": {"bug": 18, "feature_request": 12, "question": 10, "urgent": 7},
+  "by_priority": {"P1": 5, "P2": 20, "P3": 22},
+  "by_status": {"open": 30, "in_progress": 9, "closed": 8}
+}
+```
+
+- Cada diccionario trae **siempre todas las claves** de su enum, en el orden del
+  enum, con `0` si no hay ninguno: quien lo consuma no tiene que comprobar si
+  falta una clave. Sin tickets → `total: 0` y todo a `0`.
+- La suma de cada diccionario es igual a `total`.
+- Los conteos los hace SQLite (`COUNT(*) ... GROUP BY`) en `db.py`, sin cargar los
+  tickets en memoria.
+
+> Como `GET /tickets/tablero`, debe declararse **antes** que `GET /tickets/{id}`.
 
 ### `GET /tickets/tablero`
 
@@ -727,3 +752,4 @@ el README) con fecha y motivo. Ejemplo:
 | 2026-11-24 | El flujo de estados (§4.2) lo **guía el tablero** con botones; la API sigue aceptando cualquier estado válido. | El test de aceptación 5 pasa de `open` a `in_progress` por `PATCH` y el agente del Día 3 necesitará libertad; un `409` por transición inválida sería un contrato nuevo. |
 | 2026-11-24 | **Varios responsables por ticket** (cambio de requisitos del cliente): campo `assignees: list[str]` en texto libre, en tabla propia `ticket_assignees` (N:M). Se asignan al crear (opcional) y se sustituyen con `PATCH`. Filtro `assignee` en `GET /tickets`, `GET /tickets/tablero` y `GET /`, que devuelve los tickets donde esa persona es **una de** sus responsables. Se aceptan como lista JSON o texto separado por comas. | Marta: "muchas veces hay dos o tres técnicos en el mismo ticket" y "que cada técnico vea lo suyo". Texto libre porque no hay usuarios ni login (fuera de alcance). Tabla propia para filtrar con SQL normal y sin migrar la BD existente. El texto con comas evita JavaScript propio en el formulario (`json-enc` envía el campo como string). |
 | 2026-11-24 | **Prompt con criterios del histórico y 13 ejemplos (few-shot)** en lugar de enviar los 140 tickets antiguos en cada llamada. Los 140 se etiquetan a mano en `data/tickets_etiquetados.json` y sirven para medir el acierto con `scripts/evaluar_clasificador.py`. Una persona bloqueada con plazo inminente o cliente esperando → `urgent` P1. | Los tickets antiguos no traían etiqueta, así que enviarlos tal cual no enseña el criterio y multiplicaría por ~50 los tokens y la latencia. La regla del plazo inminente la decide el equipo y encaja con el BRIEF ("esto urge porque tenemos demo el viernes"). |
+| 2026-11-24 | **`GET /tickets/stats`**: conteos totales, por categoría, por prioridad y por estado, en JSON y sin frontend. Siempre con todas las claves de cada enum (0 si no hay). | Petición de Marta para la presentación interna. Las claves fijas evitan que quien consuma el JSON tenga que comprobar si falta alguna. |
