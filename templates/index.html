@@ -20,12 +20,8 @@
       <p class="mt-2 text-slate-600">Tablero de incidencias con clasificación automática por IA.</p>
     </header>
 
-    <!-- BLOQUE 1: formulario para crear tickets (otra rama). Al crear un ticket debe lanzar
-         el evento "ticket-creado" para que el tablero se refresque (ver SPEC §7.1). -->
-
-    <!-- BLOQUES 2 y 3: filtros + tablero -->
-    {% include "_filtros.html" %}
-    <!-- Bloque 1: formulario para crear tickets -->
+    <!-- BLOQUE 1: formulario para crear tickets. Al crear un ticket lanza el evento
+         "ticket-creado" para que el tablero se refresque (SPEC §7.1). -->
     <section class="rounded-lg bg-white p-6 shadow-sm ring-1 ring-slate-200">
       <h2 class="text-xl font-semibold">Nuevo ticket</h2>
 
@@ -68,11 +64,8 @@
       </form>
     </section>
 
-    <!-- Bloque 2: tablero de tickets -->
-    <section>
-      <h2 class="mb-4 text-xl font-semibold">Tickets</h2>
-      {% include "_tickets_table.html" %}
-    </section>
+    <!-- BLOQUES 2 y 3: filtros + tablero -->
+    {% include "_filtros.html" %}
   </main>
 
   <script>
@@ -108,6 +101,8 @@
         if (evt.detail.successful) {
           form.reset();
           mostrar("Ticket creado y clasificado.", false);
+          // Contrato con el tablero (SPEC §7.1): #tablero escucha este evento y se recarga.
+          htmx.trigger(document.body, "ticket-creado");
         } else if (xhr.status === 422) {
           let detalle = null;
           try { detalle = JSON.parse(xhr.responseText).detail; } catch (e) { /* respuesta no JSON */ }
