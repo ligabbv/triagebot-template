@@ -202,6 +202,26 @@ def list_assignees() -> list[str]:
     return [row["assignee"] for row in rows]
 
 
+# Consultas fijas (el nombre de columna no puede ir como parámetro `?`).
+_COUNT_QUERIES = {
+    "category": "SELECT category AS valor, COUNT(*) AS n FROM tickets GROUP BY category",
+    "priority": "SELECT priority AS valor, COUNT(*) AS n FROM tickets GROUP BY priority",
+    "status": "SELECT status AS valor, COUNT(*) AS n FROM tickets GROUP BY status",
+}
+
+
+def count_tickets() -> dict:
+    """Conteos para GET /tickets/stats: {"total": n, "category": {...}, "priority": ..., ...}.
+
+    Solo trae los valores que existen en la BD; rellenar con 0 es cosa de quien lo use.
+    """
+    with _connection() as conn:
+        counts: dict = {"total": conn.execute("SELECT COUNT(*) FROM tickets").fetchone()[0]}
+        for field, query in _COUNT_QUERIES.items():
+            counts[field] = {row["valor"]: row["n"] for row in conn.execute(query)}
+    return counts
+
+
 def update_ticket(ticket_id: int, changes: dict) -> dict | None:
     """Actualiza status, priority y/o assignees. Devuelve None si el ticket no existe."""
     clauses = [clause for field, clause in _UPDATE_CLAUSES.items() if field in changes]

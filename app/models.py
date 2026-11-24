@@ -1,7 +1,7 @@
 """Modelos Pydantic y enums de dominio de TriageBot (SPEC §4)."""
 
 import unicodedata
-from typing import Annotated, Literal
+from typing import Annotated, Literal, get_args
 
 from pydantic import (
     BaseModel,
@@ -23,6 +23,11 @@ ALLOWED_STATUSES = {"open", "in_progress", "closed"}
 Category = Literal["bug", "feature_request", "question", "urgent"]
 Priority = Literal["P1", "P2", "P3"]
 Status = Literal["open", "in_progress", "closed"]
+
+# Los mismos valores, en el orden del enum (para recorrerlos, p. ej. en GET /tickets/stats).
+CATEGORIES: tuple[str, ...] = get_args(Category)
+PRIORITIES: tuple[str, ...] = get_args(Priority)
+STATUSES: tuple[str, ...] = get_args(Status)
 
 TITLE_MAX_LENGTH = 200
 DESCRIPTION_MAX_LENGTH = 5000
@@ -161,6 +166,15 @@ class Ticket(BaseModel):
     def overdue(self) -> bool:
         """True si ya pasó la fecha límite y el ticket no está resuelto."""
         return deadlines.is_overdue(self.due_at, self.status)
+
+
+class TicketStats(BaseModel):
+    """Respuesta de GET /tickets/stats: conteos con todas las claves de cada enum."""
+
+    total: int
+    by_category: dict[str, int]
+    by_priority: dict[str, int]
+    by_status: dict[str, int]
 
 
 class Classification(BaseModel):
