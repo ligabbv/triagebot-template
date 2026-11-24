@@ -56,6 +56,7 @@ app/
 ├── main.py          # FastAPI: app, endpoints y render de plantillas. Nada de SQL ni de LLM aquí.
 ├── models.py        # Modelos Pydantic (entrada, salida) y enums.
 ├── db.py            # Toda la persistencia con sqlite3: init, insert, get, list, update.
+├── deadlines.py     # Fecha límite y vencidos (§4.1). Funciones puras: sin BD, FastAPI ni LLM.
 └── classifier.py    # La ÚNICA llamada al LLM. Expone classify_ticket().
 templates/
 ├── index.html             # Página completa (GET /). Incluye los bloques del §7
@@ -117,11 +118,56 @@ Una sola entidad: `Ticket`.
 | `tags` | list[str] | Lista (puede estar vacía). Máx. 5 tags, cada uno máx. 30 chars, en minúscula y sin duplicados |
 | `status` | str | Uno de: `open`, `in_progress`, `closed`. Default: `open` |
 | `assignees` | list[str] | Responsables del ticket (puede estar vacía = "Sin asignar"). Ver reglas abajo |
+| `status` | str | Uno de: `open`, `in_progress`, `closed`. Default: `open` (ver §4.2) |
 | `created_at` | datetime | UTC, generado en servidor |
 | `updated_at` | datetime | UTC. Igual a `created_at` al crear; se actualiza en cada `PATCH` |
+| `due_at` | datetime | **Calculado, no se guarda.** Fecha límite según la prioridad (ver §4.1) |
+| `overdue` | bool | **Calculado, no se guarda.** `true` si el ticket va vencido (ver §4.1) |
 
 `category`, `priority` y `tags` los rellena el clasificador (sección 6) en el
-momento de crear el ticket.
+momento de crear el ticket. `due_at` y `overdue` aparecen en **todas** las
+respuestas JSON de ticket (`POST`, `GET`, `PATCH`), pero no son columnas de la BD.
+
+### 4.1 Fecha límite (`due_at`) y vencidos (`overdue`)
+
+La fecha límite depende de la prioridad y se cuenta desde el día de creación
+(`created_at`), hasta el final de ese día (23:59:59 UTC):
+
+| Prioridad | Plazo | Ejemplo (creado el 24/11 a las 10:00) |
+|-----------|-------|----------------------------------------|
+| `P1` | Hoy mismo | `due_at` = 24/11 23:59:59 |
+| `P2` | Mañana | `due_at` = 25/11 23:59:59 |
+| `P3` | Un par de días | `due_at` = 26/11 23:59:59 |
+
+- `overdue = true` si **ahora > `due_at`** y el ticket **no está resuelto**
+  (`status != "closed"`). Un ticket resuelto nunca cuenta como vencido.
+- Se calcula en cada respuesta, no se guarda: si alguien cambia la prioridad con
+  `PATCH`, la fecha límite se recalcula sola (desde el `created_at` original).
+- La lógica vive en `app/deadlines.py` (funciones puras, sin BD ni FastAPI).
+
+### 4.2 Ciclo de vida del estado
+
+Los valores de la API **no cambian** (`open`, `in_progress`, `closed`); en el
+tablero se muestran como Abierto, En curso y **Resuelto**:
+
+```text
+  Abierto ──Empezar──▶ En curso ──Resolver──▶ Resuelto
+     │                                           │
+     └──────────────Resolver──────────────▶      │
+     ▲                                           │
+     └───────────────────Reabrir─────────────────┘
+```
+
+| Estado actual | Acciones en el tablero | `PATCH` que envían |
+|---------------|------------------------|--------------------|
+| Abierto (`open`) | Empezar · Resolver | `{"status": "in_progress"}` · `{"status": "closed"}` |
+| En curso (`in_progress`) | Resolver | `{"status": "closed"}` |
+| Resuelto (`closed`) | Reabrir | `{"status": "open"}` |
+
+La API **no impone** este flujo: `PATCH` acepta cualquier estado válido (lo
+necesitan el test de aceptación 5 y el agente del Día 3). El flujo lo guía el
+tablero, que solo ofrece los botones de la tabla. Un ticket reabierto conserva su
+`created_at`, así que si ya pasó su plazo aparece como vencido.
 
 ### Responsables (`assignees`)
 
@@ -261,6 +307,12 @@ descendente a igualdad).
 ```text
 GET /tickets?category=bug&priority=P1&status=open
 GET /tickets?assignee=Ana
+`category`, `priority`, `status` y `overdue` (`true` = solo vencidos,
+`false` = solo no vencidos; ver §4.1).
+
+```text
+GET /tickets?category=bug&priority=P1&status=open
+GET /tickets?overdue=true
 ```
 
 - `assignee` (un solo nombre): devuelve los tickets que **tienen a esa persona entre
@@ -269,7 +321,7 @@ GET /tickets?assignee=Ana
 
 - **Response `200 OK`**: lista JSON de tickets (lista vacía `[]` si no hay).
 - **Response `422`**: si un filtro trae un valor fuera de su enum
-  (p. ej. `?priority=P9`).
+  (p. ej. `?priority=P9`) o `overdue` no es booleano.
 
 ### `GET /tickets/tablero`
 
@@ -281,13 +333,17 @@ pensado para que HTMX lo inserte en `#tablero`. El JSON de los mismos datos es
 `assignee` (mismo significado que en `GET /tickets`). Un valor **vacío** (la
 opción "Todos" de un `<select>` envía `category=`) significa "sin filtro", **no**
 es un error.
+`vencidos` (`vencidos=1` = solo vencidos; lo envía la casilla "Solo vencidos").
+Un valor **vacío** (la opción "Todos" de un `<select>` envía `category=`)
+significa "sin filtro", **no** es un error.
 
 ```text
 GET /tickets/tablero?category=bug&priority=&status=open
+GET /tickets/tablero?vencidos=1
 ```
 
-- **Response `200 OK`**: `text/html` con la tabla; si no hay resultados, una fila
-  "No hay tickets.".
+- **Response `200 OK`**: `text/html` con el aviso de vencidos y la tabla; si no
+  hay resultados, una fila "No hay tickets.".
 - **Response `422`**: si un filtro trae un valor no vacío fuera de su enum
   (p. ej. `?category=URGENT`).
 - **Cabecera `HX-Push-Url`**: la respuesta indica a HTMX la URL de la página
@@ -320,6 +376,10 @@ inmutables tras la creación.
   asignar. Mismas reglas y límites que al crear.
 
 - **Response `200 OK`**: ticket actualizado, con `updated_at` renovado.
+- **Response `200 OK`**: ticket actualizado, con `updated_at` renovado (y
+  `due_at`/`overdue` recalculados).
+- Cualquier transición entre estados válidos está permitida (el flujo
+  Empezar → Resolver → Reabrir lo guía el tablero, ver §4.2).
 - **Response `404 Not Found`**: si no existe.
 - **Response `422`**: si algún valor no pertenece al enum permitido, si el body
   viene vacío (`{}`) o si trae campos no permitidos (`title`, `category`…).
@@ -444,7 +504,7 @@ contener:
      |-------|-------------------|
      | `category` | `bug` → Error · `feature_request` → Mejora · `question` → Duda · `urgent` → Urgente |
      | `priority` | `P1` → P1 · Alta · `P2` → P2 · Media · `P3` → P3 · Baja |
-     | `status` | `open` → Abierto · `in_progress` → En curso · `closed` → Cerrado |
+     | `status` | `open` → Abierto · `in_progress` → En curso · `closed` → Resuelto |
 
    - Cabeceras: ID, Título, Categoría, Prioridad, Etiquetas, Responsables, Estado,
      Creado (UTC).
@@ -453,6 +513,15 @@ contener:
      despliega un campo con los nombres separados por comas y un botón "Guardar",
      que hace `PATCH /tickets/{id}` con `assignees` y lanza el evento
      `ticket-actualizado` (el tablero lo escucha igual que `ticket-creado`).
+   - Cabeceras: ID, Título, Categoría, Prioridad, Etiquetas, Estado, Vence,
+     Creado (UTC), Acciones.
+   - Sin tags se muestra "—". Sin tickets, una fila "No hay tickets.".
+   - **Vencidos de un vistazo** (§4.1):
+     - Columna **Vence** con la fecha límite (`dd/mm/aaaa`). Si va vencido, la
+       fila se pinta en rojo claro y lleva la etiqueta roja **"Vencido"**.
+     - Encima de la tabla, un aviso rojo **"⚠ N tickets vencidos"** con el total
+       de vencidos de toda la base (no solo de los filtrados) y un enlace
+       "Ver solo vencidos". Si no hay ninguno, el aviso no aparece.
 3. **Filtros**: tres `<select>` (`category` / `priority` / `status`), cada uno
    con una opción "Todas"/"Todos", y un campo de texto **Responsable**
    (`assignee`) con sugerencias (`<datalist>`) de los nombres ya asignados, para
@@ -462,8 +531,16 @@ contener:
    de filtros envía los cuatro valores) y reemplaza el contenido de `#tablero`. Hay un enlace
    "Limpiar filtros" (`/`). Los filtros activos viven en la URL (ver
    `GET /tickets/tablero` y `GET /`), así que sobreviven a un refresco.
-4. **Cambio de estado** desde la tabla: un `<select>` de `status` por fila que
-   hace `PATCH /tickets/{id}` y refresca la fila.
+   Además, una casilla **"Solo vencidos"** (`vencidos=1`).
+4. **Cambio de estado** desde la tabla: en la columna **Acciones**, botones según
+   el estado (§4.2): Abierto → *Empezar* y *Resolver*; En curso → *Resolver*;
+   Resuelto → *Reabrir*. Cada botón hace `PATCH /tickets/{id}` con el nuevo
+   `status` (JSON, con `json-enc`) y, si va bien, lanza el evento
+   `ticket-actualizado`; `#tablero` lo escucha y se recarga respetando los
+   filtros. Si el `PATCH` falla, se muestra un aviso en castellano.
+   - `#tablero` lleva `hx-disinherit="*"`: sin eso, los botones heredarían su
+     `hx-include="#filtros"` y el `PATCH` enviaría también los campos de los
+     filtros (`422` por campos no permitidos).
 5. **Estado vacío**: si no hay tickets (o el filtro no devuelve nada), una fila
    con "No hay tickets".
 
@@ -535,6 +612,10 @@ los fijan sus `assert`.
 - `GET /tickets/99999` → `404`. `GET /tickets/abc` → `422`.
 - `PATCH` con `status: "inventado"` → `422`. `PATCH` a id inexistente → `404`.
 - `GET /` devuelve `200` con `text/html`.
+- `tests/test_deadlines.py`: plazos P1/P2/P3, vencido / no vencido / resuelto
+  nunca vencido, `due_at`/`overdue` en la respuesta JSON, flujo
+  Abierto → En curso → Resuelto → Abierto, filtro `?overdue=true` y
+  `?vencidos=1` en el tablero.
 
 Ningún test propio llama al LLM real.
 
@@ -613,3 +694,6 @@ el README) con fecha y motivo. Ejemplo:
 | 2026-11-24 | Los filtros viajan por la URL (`/?category=bug`) y `GET /tickets/tablero` responde `HX-Push-Url`. Un filtro vacío ("Todos") se trata como "sin filtro". | Error típico del Lab 4: "mi filtro funciona pero al refrescar la página se pierde". Un `<select>` en "Todos" envía `category=` vacío, que con un enum estricto daría `422`. |
 | 2026-11-24 | `created_at` se muestra en UTC (cabecera "Creado (UTC)") con formato `dd/mm/aaaa hh:mm`. | Es la hora que guarda la BD; convertir a hora local requeriría `tzdata` en Windows (dependencia nueva). |
 | 2026-11-24 | **Varios responsables por ticket** (cambio de requisitos del cliente): campo `assignees: list[str]` en texto libre, en tabla propia `ticket_assignees` (N:M). Se asignan al crear (opcional) y se sustituyen con `PATCH`. Filtro `assignee` en `GET /tickets`, `GET /tickets/tablero` y `GET /`, que devuelve los tickets donde esa persona es **una de** sus responsables. Se aceptan como lista JSON o texto separado por comas. | Marta: "muchas veces hay dos o tres técnicos en el mismo ticket" y "que cada técnico vea lo suyo". Texto libre porque no hay usuarios ni login (fuera de alcance). Tabla propia para filtrar con SQL normal y sin migrar la BD existente. El texto con comas evita JavaScript propio en el formulario (`json-enc` envía el campo como string). |
+| 2026-11-24 | **Fecha límite por prioridad** (P1 hoy, P2 mañana, P3 en dos días, hasta las 23:59:59 UTC) y **vencidos**. `due_at` y `overdue` se **calculan** en cada respuesta, no se guardan en la BD. | Petición de Marta: "saber cuándo se me echa el tiempo encima". Al calcularlas no hace falta migrar la tabla y siempre cuadran con la prioridad actual. |
+| 2026-11-24 | **"Resuelto" = `closed`**: no se añade un estado nuevo; se reutiliza `closed` y se muestra como "Resuelto". Reabrir = volver a `open`. | Petición de Marta: abierto → en curso → resuelto, y reabrir. Los enums de la API son vinculantes (tests, agente del Día 3); cambiar `closed` por `resolved` rompería el contrato. |
+| 2026-11-24 | El flujo de estados (§4.2) lo **guía el tablero** con botones; la API sigue aceptando cualquier estado válido. | El test de aceptación 5 pasa de `open` a `in_progress` por `PATCH` y el agente del Día 3 necesitará libertad; un `409` por transición inválida sería un contrato nuevo. |

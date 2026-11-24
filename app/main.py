@@ -49,7 +49,8 @@ CATEGORY_LABELS = {
     "urgent": "Urgente",
 }
 PRIORITY_LABELS = {"P1": "P1 · Alta", "P2": "P2 · Media", "P3": "P3 · Baja"}
-STATUS_LABELS = {"open": "Abierto", "in_progress": "En curso", "closed": "Cerrado"}
+# "closed" se muestra como "Resuelto" (SPEC §4.2): el valor de la API no cambia.
+STATUS_LABELS = {"open": "Abierto", "in_progress": "En curso", "closed": "Resuelto"}
 templates.env.globals.update(
     CATEGORY_LABELS=CATEGORY_LABELS,
     PRIORITY_LABELS=PRIORITY_LABELS,
@@ -71,7 +72,16 @@ def _format_date(value: str) -> str:
         return value
 
 
+def _format_day(value: str) -> str:
+    """'2026-06-29T23:59:59Z' -> '29/06/2026' (para la fecha límite)."""
+    try:
+        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").strftime("%d/%m/%Y")
+    except (TypeError, ValueError):
+        return value
+
+
 templates.env.filters["fecha"] = _format_date
+templates.env.filters["dia"] = _format_day
 
 
 def _clean_assignee(assignee: str) -> str:
@@ -95,6 +105,38 @@ def _read_filters(
             raise HTTPException(status_code=422, detail=f"Valor no válido para '{name}': {value}")
     raw["assignee"] = _clean_assignee(assignee)
     return {name: value for name, value in raw.items() if value}
+
+
+def _read_solo_vencidos(vencidos: str) -> bool:
+    """Casilla "Solo vencidos": envía vencidos=1 si está marcada y nada si no."""
+    return vencidos.strip().lower() in {"1", "true", "on"}
+
+
+def _as_tickets(rows: list[dict]) -> list[Ticket]:
+    """Filas de la BD -> modelos Ticket, que añaden due_at y overdue (SPEC §4.1)."""
+    return [Ticket.model_validate(row) for row in rows]
+
+
+def _board_context(filtros: dict[str, str], solo_vencidos: bool) -> dict:
+    """Datos del tablero: tickets filtrados + total de vencidos de toda la base."""
+    tickets = _as_tickets(db.list_tickets(**filtros))
+    if solo_vencidos:
+        tickets = [ticket for ticket in tickets if ticket.overdue]
+    total_vencidos = sum(1 for ticket in _as_tickets(db.list_tickets()) if ticket.overdue)
+    return {
+        "tickets": tickets,
+        "filtros": filtros,
+        "solo_vencidos": solo_vencidos,
+        "total_vencidos": total_vencidos,
+    }
+
+
+def _board_url(filtros: dict[str, str], solo_vencidos: bool) -> str:
+    """URL de la página completa con los filtros activos (para HX-Push-Url)."""
+    params = dict(filtros)
+    if solo_vencidos:
+        params["vencidos"] = "1"
+    return "/?" + urlencode(params) if params else "/"
 
 
 @asynccontextmanager
@@ -148,6 +190,12 @@ def list_tickets(
         status=status,
         assignee=_clean_assignee(assignee) or None,
     )
+    overdue: bool | None = None,
+) -> list[Ticket]:
+    tickets = _as_tickets(db.list_tickets(category=category, priority=priority, status=status))
+    if overdue is not None:
+        tickets = [ticket for ticket in tickets if ticket.overdue == overdue]
+    return tickets
 
 
 # OJO con el orden: "/tickets/tablero" tiene que declararse ANTES que "/tickets/{ticket_id}".
@@ -162,11 +210,16 @@ def tablero(
 ) -> HTMLResponse:
     """Fragmento HTML (solo la tabla) para HTMX. El JSON está en GET /tickets."""
     filtros = _read_filters(category, priority, status, assignee)
+    vencidos: str = "",
+) -> HTMLResponse:
+    """Fragmento HTML (aviso de vencidos + tabla) para HTMX. El JSON está en GET /tickets."""
+    filtros = _read_filters(category, priority, status)
+    solo_vencidos = _read_solo_vencidos(vencidos)
     response = templates.TemplateResponse(
-        request, "_tickets_table.html", {"tickets": db.list_tickets(**filtros)}
+        request, "_tickets_table.html", _board_context(filtros, solo_vencidos)
     )
     # Mantiene los filtros en la URL del navegador: al refrescar (F5) no se pierden.
-    response.headers["HX-Push-Url"] = "/?" + urlencode(filtros) if filtros else "/"
+    response.headers["HX-Push-Url"] = _board_url(filtros, solo_vencidos)
     return response
 
 
@@ -201,4 +254,9 @@ def index(
         "filtros": filtros,
         "responsables": db.list_assignees(),  # sugerencias del filtro por responsable
     }
+    vencidos: str = "",
+) -> HTMLResponse:
+    # Los filtros llegan por la URL (/?category=bug): así sobreviven a un refresco.
+    filtros = _read_filters(category, priority, status)
+    context = _board_context(filtros, _read_solo_vencidos(vencidos))
     return templates.TemplateResponse(request, "index.html", context)
