@@ -1,9 +1,11 @@
 """Modelos Pydantic y enums de dominio de TriageBot (SPEC §4)."""
 
+import unicodedata
 from typing import Annotated, Literal
 
 from pydantic import (
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     StringConstraints,
     computed_field,
@@ -29,12 +31,39 @@ MAX_TAG_LENGTH = 30
 MAX_ASSIGNEES = 10
 MAX_ASSIGNEE_LENGTH = 50
 
-# Se aplica strip() y después se comprueba la longitud: "   " queda vacío -> 422.
+def _is_invisible(char: str) -> bool:
+    """Espacios (incluido el no separable \\u00a0) y caracteres de formato invisibles (categoría
+    Unicode "Cf": \\u200b espacio de ancho cero, \\u200d, \\u2060, \\ufeff...)."""
+    return char.isspace() or unicodedata.category(char) == "Cf"
+
+
+def strip_invisible(value: object) -> object:
+    """Como strip(), pero quitando también los caracteres invisibles de los extremos.
+
+    Así "\\u200b\\u200b" queda vacío y da 422, igual que "   " (QA, escenario 1). Solo toca los
+    extremos: un \\u200d dentro de un emoji compuesto (👩‍💻) se conserva. Si no es texto, lo
+    devuelve tal cual para que Pydantic dé su error de tipo.
+    """
+    if not isinstance(value, str):
+        return value
+    start, end = 0, len(value)
+    while start < end and _is_invisible(value[start]):
+        start += 1
+    while end > start and _is_invisible(value[end - 1]):
+        end -= 1
+    return value[start:end]
+
+
+# Se quitan espacios e invisibles de los extremos y después se comprueba la longitud:
+# "   " o "​" quedan vacíos -> 422.
 Title = Annotated[
-    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=TITLE_MAX_LENGTH)
+    str,
+    BeforeValidator(strip_invisible),
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=TITLE_MAX_LENGTH),
 ]
 Description = Annotated[
     str,
+    BeforeValidator(strip_invisible),
     StringConstraints(strip_whitespace=True, min_length=1, max_length=DESCRIPTION_MAX_LENGTH),
 ]
 
@@ -56,7 +85,7 @@ def normalize_assignees(value: object) -> list[str]:
     for name in value:
         if not isinstance(name, str):
             raise ValueError("Cada responsable debe ser un nombre de texto")
-        clean = " ".join(name.split())
+        clean = " ".join(strip_invisible(name).split())
         if not clean or clean.casefold() in seen:
             continue
         if len(clean) > MAX_ASSIGNEE_LENGTH:
