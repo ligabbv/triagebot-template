@@ -23,6 +23,8 @@ TITLE_MAX_LENGTH = 200
 DESCRIPTION_MAX_LENGTH = 5000
 MAX_TAGS = 5
 MAX_TAG_LENGTH = 30
+MAX_ASSIGNEES = 10
+MAX_ASSIGNEE_LENGTH = 50
 
 # Se aplica strip() y después se comprueba la longitud: "   " queda vacío -> 422.
 Title = Annotated[
@@ -34,25 +36,70 @@ Description = Annotated[
 ]
 
 
+def normalize_assignees(value: object) -> list[str]:
+    """Responsables (SPEC §4): lista o texto con comas -> lista limpia y sin duplicados.
+
+    Lanza ValueError (-> 422) si se superan los límites: es dato del usuario, no se recorta.
+    """
+    if value is None:
+        return []
+    if isinstance(value, str):
+        value = value.split(",")
+    if not isinstance(value, list):
+        raise ValueError("Los responsables deben ser una lista de nombres")
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for name in value:
+        if not isinstance(name, str):
+            raise ValueError("Cada responsable debe ser un nombre de texto")
+        clean = " ".join(name.split())
+        if not clean or clean.casefold() in seen:
+            continue
+        if len(clean) > MAX_ASSIGNEE_LENGTH:
+            raise ValueError(
+                f"El nombre '{clean[:20]}…' supera {MAX_ASSIGNEE_LENGTH} caracteres"
+            )
+        seen.add(clean.casefold())
+        normalized.append(clean)
+
+    if len(normalized) > MAX_ASSIGNEES:
+        raise ValueError(f"Como máximo {MAX_ASSIGNEES} responsables por ticket")
+    return normalized
+
+
 class TicketCreate(BaseModel):
     """Body de POST /tickets."""
 
     title: Title
     description: Description
+    assignees: list[str] = []
+
+    @field_validator("assignees", mode="before")
+    @classmethod
+    def _assignees(cls, value: object) -> list[str]:
+        return normalize_assignees(value)
 
 
 class TicketUpdate(BaseModel):
-    """Body de PATCH /tickets/{id}: solo status y/o priority; nada más."""
+    """Body de PATCH /tickets/{id}: solo status, priority y/o assignees; nada más."""
 
     model_config = ConfigDict(extra="forbid")
 
     status: Status | None = None
     priority: Priority | None = None
+    # None = no tocar; [] = dejar sin asignar. Si viene, SUSTITUYE la lista entera.
+    assignees: list[str] | None = None
+
+    @field_validator("assignees", mode="before")
+    @classmethod
+    def _assignees(cls, value: object) -> list[str] | None:
+        return None if value is None else normalize_assignees(value)
 
     @model_validator(mode="after")
     def at_least_one_field(self) -> "TicketUpdate":
-        if self.status is None and self.priority is None:
-            raise ValueError("Indica al menos 'status' o 'priority'")
+        if self.status is None and self.priority is None and self.assignees is None:
+            raise ValueError("Indica al menos 'status', 'priority' o 'assignees'")
         return self
 
 
@@ -66,6 +113,7 @@ class Ticket(BaseModel):
     priority: Priority
     tags: list[str]
     status: Status
+    assignees: list[str]
     created_at: str  # ISO 8601 UTC, p. ej. 2026-06-29T09:30:00Z
     updated_at: str
 

@@ -116,11 +116,27 @@ Una sola entidad: `Ticket`.
 | `priority` | str | Uno de: `P1`, `P2`, `P3` |
 | `tags` | list[str] | Lista (puede estar vacía). Máx. 5 tags, cada uno máx. 30 chars, en minúscula y sin duplicados |
 | `status` | str | Uno de: `open`, `in_progress`, `closed`. Default: `open` |
+| `assignees` | list[str] | Responsables del ticket (puede estar vacía = "Sin asignar"). Ver reglas abajo |
 | `created_at` | datetime | UTC, generado en servidor |
 | `updated_at` | datetime | UTC. Igual a `created_at` al crear; se actualiza en cada `PATCH` |
 
 `category`, `priority` y `tags` los rellena el clasificador (sección 6) en el
 momento de crear el ticket.
+
+### Responsables (`assignees`)
+
+Un ticket puede tener **varios responsables** (técnicos trabajando a la vez en él).
+No hay usuarios ni login (fuera de alcance): un responsable es un **nombre en texto
+libre**.
+
+- Se aceptan como lista JSON (`["Ana", "Luis"]`) o como texto separado por comas
+  (`"Ana, Luis"`, lo que envía el formulario web).
+- Normalización: `strip()`, espacios internos repetidos → uno, se descartan los
+  vacíos y los duplicados **sin distinguir mayúsculas** (`"ana"` y `"Ana"` son la
+  misma persona; se conserva la primera escritura). Se mantiene el orden.
+- Límites: máx. **10** responsables por ticket y máx. **50** caracteres por nombre.
+  Si se superan → `422` (no se recorta en silencio: es dato del usuario, no del LLM).
+- Por defecto `[]` ("Sin asignar"). El clasificador **no** los toca.
 
 > **Los enums son vinculantes.** Si vuestro código devuelve `"URGENT"` en
 > mayúsculas o un valor fuera de la lista, los tests fallan.
@@ -139,7 +155,24 @@ CREATE TABLE IF NOT EXISTS tickets (
     created_at  TEXT    NOT NULL,               -- ISO 8601 UTC, p. ej. 2026-06-29T09:30:00Z
     updated_at  TEXT    NOT NULL
 );
+
+-- Relación N:M ticket ↔ responsable (una fila por responsable asignado).
+CREATE TABLE IF NOT EXISTS ticket_assignees (
+    ticket_id    INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+    assignee     TEXT    NOT NULL,   -- nombre tal y como se escribió ("Iñigo")
+    assignee_key TEXT    NOT NULL,   -- clave para comparar: casefold() en Python ("iñigo")
+    position     INTEGER NOT NULL,   -- orden en que se asignaron
+    PRIMARY KEY (ticket_id, assignee_key)
+);
 ```
+
+- Los responsables van en tabla propia (no en una columna JSON como `tags`): así
+  filtrar por responsable es SQL normal con `?`, y una base de datos ya existente
+  solo gana la tabla nueva con `CREATE TABLE IF NOT EXISTS`, sin migración. Los
+  tickets antiguos quedan "Sin asignar".
+- Se compara por `assignee_key` (calculada con `casefold()` en Python) y no con
+  `COLLATE NOCASE`: el de SQLite solo ignora mayúsculas en ASCII, así que
+  `"IÑIGO"` no encontraría a `"Iñigo"`.
 
 - La tabla se crea al arrancar la app (`db.init_db()` en el `lifespan` de
   FastAPI) **y también** con `CREATE TABLE IF NOT EXISTS` en cada conexión: los
@@ -177,9 +210,12 @@ durante la petición**: la respuesta ya trae el ticket clasificado.
 ```json
 {
   "title": "La página de login no carga",
-  "description": "Al pulsar el botón de login, sale un error 500 del servidor."
+  "description": "Al pulsar el botón de login, sale un error 500 del servidor.",
+  "assignees": ["Ana", "Luis"]
 }
 ```
+
+`assignees` es **opcional** (por defecto `[]`); ver reglas en la sección 4.
 
 **Response `201 Created`**:
 ```json
@@ -191,6 +227,7 @@ durante la petición**: la respuesta ya trae el ticket clasificado.
   "priority": "P1",
   "tags": ["login", "error_500", "backend"],
   "status": "open",
+  "assignees": ["Ana", "Luis"],
   "created_at": "2026-06-29T09:30:00Z",
   "updated_at": "2026-06-29T09:30:00Z"
 }
@@ -198,7 +235,8 @@ durante la petición**: la respuesta ya trae el ticket clasificado.
 
 **Errores**:
 - `422 Unprocessable Entity` si `title` o `description` faltan, son vacíos o
-  solo espacios, o exceden su longitud máxima. Se usa el formato estándar de
+  solo espacios, o exceden su longitud máxima; o si `assignees` incumple sus
+  límites (más de 10, o un nombre de más de 50 caracteres). Se usa el formato estándar de
   FastAPI (`{"detail": [...]}`).
 
 **Orden de operaciones:** validar → clasificar → guardar → responder. Si la
@@ -218,11 +256,16 @@ Devuelve la lista de tickets, ordenada por `created_at` descendente (y por `id`
 descendente a igualdad).
 
 **Query params opcionales** (combinables, filtran por igualdad exacta):
-`category`, `priority`, `status`.
+`category`, `priority`, `status` y `assignee`.
 
 ```text
 GET /tickets?category=bug&priority=P1&status=open
+GET /tickets?assignee=Ana
 ```
+
+- `assignee` (un solo nombre): devuelve los tickets que **tienen a esa persona entre
+  sus responsables**, aunque tengan más. Sin distinguir mayúsculas; un valor vacío
+  significa "sin filtro".
 
 - **Response `200 OK`**: lista JSON de tickets (lista vacía `[]` si no hay).
 - **Response `422`**: si un filtro trae un valor fuera de su enum
@@ -234,9 +277,10 @@ Devuelve **HTML**, no JSON: solo el fragmento de la tabla (`_tickets_table.html`
 pensado para que HTMX lo inserte en `#tablero`. El JSON de los mismos datos es
 `GET /tickets`.
 
-**Query params opcionales** (combinables): `category`, `priority`, `status`. Un
-valor **vacío** (la opción "Todos" de un `<select>` envía `category=`) significa
-"sin filtro", **no** es un error.
+**Query params opcionales** (combinables): `category`, `priority`, `status` y
+`assignee` (mismo significado que en `GET /tickets`). Un valor **vacío** (la
+opción "Todos" de un `<select>` envía `category=`) significa "sin filtro", **no**
+es un error.
 
 ```text
 GET /tickets/tablero?category=bug&priority=&status=open
@@ -263,13 +307,17 @@ GET /tickets/tablero?category=bug&priority=&status=open
 
 ### `PATCH /tickets/{id}`
 
-Actualiza **solo** `status` y/o `priority`. El resto de campos son inmutables
-tras la creación.
+Actualiza **solo** `status`, `priority` y/o `assignees`. El resto de campos son
+inmutables tras la creación.
 
-**Request body** (cualquiera de los dos campos, o ambos):
+**Request body** (cualquier combinación de los tres campos):
 ```json
 { "status": "in_progress", "priority": "P2" }
+{ "assignees": ["Ana", "Luis", "Marta"] }
 ```
+
+- `assignees` **sustituye** la lista completa (no añade). `[]` deja el ticket sin
+  asignar. Mismas reglas y límites que al crear.
 
 - **Response `200 OK`**: ticket actualizado, con `updated_at` renovado.
 - **Response `404 Not Found`**: si no existe.
@@ -374,7 +422,8 @@ Mensaje `user`: `Título: {title}\nDescripción: {description}`.
 Una sola página HTML servida en `GET /` con `templates/index.html`. Debe
 contener:
 
-1. **Formulario** con dos campos (`title`, `description`) y un botón "Crear
+1. **Formulario** con los campos `title`, `description` y `assignees`
+   ("Responsables", opcional, nombres separados por comas) y un botón "Crear
    ticket".
    - Envío con HTMX: `hx-post="/tickets"`, `hx-ext="json-enc"` (la extensión
      json-enc de HTMX, por CDN, para enviar JSON y reutilizar el mismo
@@ -397,12 +446,20 @@ contener:
      | `priority` | `P1` → P1 · Alta · `P2` → P2 · Media · `P3` → P3 · Baja |
      | `status` | `open` → Abierto · `in_progress` → En curso · `closed` → Cerrado |
 
-   - Cabeceras: ID, Título, Categoría, Prioridad, Etiquetas, Estado, Creado (UTC).
+   - Cabeceras: ID, Título, Categoría, Prioridad, Etiquetas, Responsables, Estado,
+     Creado (UTC).
    - Sin tags se muestra "—". Sin tickets, una fila "No hay tickets.".
+   - **Responsables**: un chip por persona, o "Sin asignar". Un "Editar" por fila
+     despliega un campo con los nombres separados por comas y un botón "Guardar",
+     que hace `PATCH /tickets/{id}` con `assignees` y lanza el evento
+     `ticket-actualizado` (el tablero lo escucha igual que `ticket-creado`).
 3. **Filtros**: tres `<select>` (`category` / `priority` / `status`), cada uno
-   con una opción "Todas"/"Todos". Al cambiar cualquiera, HTMX hace
-   `GET /tickets/tablero?category=…&priority=…&status=…` (el formulario de filtros
-   envía los tres valores) y reemplaza el contenido de `#tablero`. Hay un enlace
+   con una opción "Todas"/"Todos", y un campo de texto **Responsable**
+   (`assignee`) con sugerencias (`<datalist>`) de los nombres ya asignados, para
+   que cada técnico vea lo suyo. Al cambiar cualquiera (en el texto: al salir del
+   campo o pulsar Enter), HTMX hace
+   `GET /tickets/tablero?category=…&priority=…&status=…&assignee=…` (el formulario
+   de filtros envía los cuatro valores) y reemplaza el contenido de `#tablero`. Hay un enlace
    "Limpiar filtros" (`/`). Los filtros activos viven en la URL (ver
    `GET /tickets/tablero` y `GET /`), así que sobreviven a un refresco.
 4. **Cambio de estado** desde la tabla: un `<select>` de `status` por fila que
@@ -416,7 +473,7 @@ El formulario y el tablero se desarrollan por separado y se conectan **solo por 
 evento HTMX**:
 
 - El contenedor `#tablero` (en `_filtros.html`) escucha
-  `hx-trigger="ticket-creado from:body"` y, al recibirlo, hace
+  `hx-trigger="ticket-creado from:body, ticket-actualizado from:body"` y, al recibirlo, hace
   `GET /tickets/tablero` incluyendo los filtros activos (`hx-include="#filtros"`).
 - **Quien cree un ticket debe lanzar el evento `ticket-creado`** cuando el
   `POST /tickets` responda `201`; por ejemplo con
@@ -555,3 +612,4 @@ el README) con fecha y motivo. Ejemplo:
 | 2026-11-24 | El tablero está en castellano: se traducen solo las etiquetas mostradas (Error/Mejora/Duda/Urgente, Alta/Media/Baja, Abierto/En curso/Cerrado). Los valores de la API no cambian. | Marta y su equipo lo usan en castellano; los enums de la API son vinculantes para los tests. |
 | 2026-11-24 | Los filtros viajan por la URL (`/?category=bug`) y `GET /tickets/tablero` responde `HX-Push-Url`. Un filtro vacío ("Todos") se trata como "sin filtro". | Error típico del Lab 4: "mi filtro funciona pero al refrescar la página se pierde". Un `<select>` en "Todos" envía `category=` vacío, que con un enum estricto daría `422`. |
 | 2026-11-24 | `created_at` se muestra en UTC (cabecera "Creado (UTC)") con formato `dd/mm/aaaa hh:mm`. | Es la hora que guarda la BD; convertir a hora local requeriría `tzdata` en Windows (dependencia nueva). |
+| 2026-11-24 | **Varios responsables por ticket** (cambio de requisitos del cliente): campo `assignees: list[str]` en texto libre, en tabla propia `ticket_assignees` (N:M). Se asignan al crear (opcional) y se sustituyen con `PATCH`. Filtro `assignee` en `GET /tickets`, `GET /tickets/tablero` y `GET /`, que devuelve los tickets donde esa persona es **una de** sus responsables. Se aceptan como lista JSON o texto separado por comas. | Marta: "muchas veces hay dos o tres técnicos en el mismo ticket" y "que cada técnico vea lo suyo". Texto libre porque no hay usuarios ni login (fuera de alcance). Tabla propia para filtrar con SQL normal y sin migrar la BD existente. El texto con comas evita JavaScript propio en el formulario (`json-enc` envía el campo como string). |
