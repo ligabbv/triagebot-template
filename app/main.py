@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
@@ -33,6 +33,22 @@ logger = logging.getLogger(__name__)
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+# Evento HTMX que emite POST /tickets: la tabla lo escucha y se recarga.
+TICKET_CREATED_EVENT = "ticket-created"
+
+
+def _fecha(iso: str) -> str:
+    """'2026-06-29T09:30:00Z' -> '29/06/2026 09:30' (SPEC §7)."""
+    try:
+        fecha, hora = iso.split("T", 1)
+        anio, mes, dia = fecha.split("-")
+        return f"{dia}/{mes}/{anio} {hora[:5]}"
+    except ValueError:
+        return iso
+
+
+templates.env.filters["fecha"] = _fecha
 
 
 @asynccontextmanager
@@ -65,10 +81,13 @@ def health() -> dict[str, str]:
 
 
 @app.post("/tickets", response_model=Ticket, status_code=201)
-def create_ticket(payload: TicketCreate) -> dict:
+def create_ticket(payload: TicketCreate, response: Response) -> dict:
     # Orden: validar (Pydantic, antes de entrar aquí) -> clasificar -> guardar -> responder.
     classification = _classify(payload.title, payload.description)
-    return db.insert_ticket(payload.title, payload.description, **classification)
+    ticket = db.insert_ticket(payload.title, payload.description, **classification)
+    # La respuesta sigue siendo JSON (la usan los tests); la cabecera solo la lee HTMX.
+    response.headers["HX-Trigger"] = TICKET_CREATED_EVENT
+    return ticket
 
 
 @app.get("/tickets", response_model=list[Ticket])
@@ -99,3 +118,15 @@ def update_ticket(ticket_id: int, payload: TicketUpdate) -> dict:
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(request, "index.html", {"tickets": db.list_tickets()})
+
+
+@app.get("/partials/tickets", response_class=HTMLResponse)
+def tickets_rows(
+    request: Request,
+    category: Category | None = None,
+    priority: Priority | None = None,
+    status: Status | None = None,
+) -> HTMLResponse:
+    """Solo las filas <tr> del tablero, para que HTMX las sustituya sin recargar."""
+    tickets = db.list_tickets(category=category, priority=priority, status=status)
+    return templates.TemplateResponse(request, "_tickets_rows.html", {"tickets": tickets})
