@@ -6,9 +6,12 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     StringConstraints,
+    computed_field,
     field_validator,
     model_validator,
 )
+
+from app import deadlines
 
 ALLOWED_CATEGORIES = {"bug", "feature_request", "question", "urgent"}
 ALLOWED_PRIORITIES = {"P1", "P2", "P3"}
@@ -68,6 +71,19 @@ class Ticket(BaseModel):
     status: Status
     created_at: str  # ISO 8601 UTC, p. ej. 2026-06-29T09:30:00Z
     updated_at: str
+
+    # Campos calculados (SPEC §4.1): salen en el JSON pero no se guardan en la BD.
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def due_at(self) -> str:
+        """Fecha límite según la prioridad."""
+        return deadlines.due_at(self.created_at, self.priority)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def overdue(self) -> bool:
+        """True si ya pasó la fecha límite y el ticket no está resuelto."""
+        return deadlines.is_overdue(self.due_at, self.status)
 
 
 class Classification(BaseModel):
