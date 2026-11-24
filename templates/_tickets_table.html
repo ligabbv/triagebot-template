@@ -1,5 +1,8 @@
-{# Fragmento: tabla de tickets (bloque 2). Lo sirven GET / (página completa) y GET /tickets/tablero (HTMX).
-   Contexto: tickets = lista de dicts. Jinja2 escapa el HTML automáticamente: no usar |safe con datos de usuario. #}
+{# Fragmento: aviso de vencidos + tabla de tickets (bloque 2). Lo sirven GET / (página completa) y
+   GET /tickets/tablero (HTMX).
+   Contexto: tickets = lista de Ticket (con due_at y overdue calculados, SPEC §4.1),
+   total_vencidos (int) y solo_vencidos (bool).
+   Jinja2 escapa el HTML automáticamente: no usar |safe con datos de usuario. #}
 {% set category_classes = {
   "bug": "bg-red-100 text-red-800",
   "feature_request": "bg-blue-100 text-blue-800",
@@ -12,10 +15,35 @@
   "P3": "bg-slate-300 text-slate-800"
 } %}
 {% set status_classes = {
-  "open": "bg-emerald-100 text-emerald-800",
+  "open": "bg-slate-200 text-slate-800",
   "in_progress": "bg-sky-100 text-sky-800",
-  "closed": "bg-slate-200 text-slate-600"
+  "closed": "bg-emerald-100 text-emerald-800"
 } %}
+
+{# Botón de cambio de estado (SPEC §4.2 y §7.4): PATCH /tickets/{id} con {"status": ...} en JSON.
+   Si va bien lanza "ticket-actualizado" y #tablero se recarga con los filtros activos. #}
+{% macro accion(ticket_id, nuevo_estado, texto, clases) %}
+<button type="button"
+        class="rounded px-2 py-1 text-xs font-semibold disabled:opacity-50 {{ clases }}"
+        hx-patch="/tickets/{{ ticket_id }}"
+        hx-ext="json-enc"
+        hx-vals='{"status": "{{ nuevo_estado }}"}'
+        hx-swap="none"
+        hx-disabled-elt="this"
+        hx-on::after-request="if (event.detail.successful) { htmx.trigger(document.body, 'ticket-actualizado') } else { alert('No se ha podido actualizar el ticket. Inténtalo de nuevo.') }">
+  {{ texto }}
+</button>
+{% endmacro %}
+
+{% if total_vencidos %}
+<div class="mb-3 flex flex-wrap items-center gap-3 rounded-md bg-red-50 px-4 py-2 text-sm text-red-800 ring-1 ring-red-200" role="status">
+  <span class="font-semibold">⚠ {{ total_vencidos }} {{ 'ticket vencido' if total_vencidos == 1 else 'tickets vencidos' }}</span>
+  {% if not solo_vencidos %}
+  <a href="/?vencidos=1" class="underline hover:text-red-950">Ver solo vencidos</a>
+  {% endif %}
+</div>
+{% endif %}
+
 <table class="min-w-full divide-y divide-slate-200 bg-white shadow-sm ring-1 ring-slate-200 rounded-lg overflow-hidden">
   <thead class="bg-slate-100">
     <tr>
@@ -26,12 +54,14 @@
       <th class="px-3 py-2 text-left text-sm font-semibold">Etiquetas</th>
       <th class="px-3 py-2 text-left text-sm font-semibold">Responsables</th>
       <th class="px-3 py-2 text-left text-sm font-semibold">Estado</th>
+      <th class="px-3 py-2 text-left text-sm font-semibold">Vence</th>
       <th class="px-3 py-2 text-left text-sm font-semibold">Creado (UTC)</th>
+      <th class="px-3 py-2 text-left text-sm font-semibold">Acciones</th>
     </tr>
   </thead>
   <tbody id="tickets-table-body" class="divide-y divide-slate-100">
     {% for ticket in tickets %}
-    <tr class="hover:bg-slate-50">
+    <tr class="{{ 'bg-red-50 hover:bg-red-100' if ticket.overdue else 'hover:bg-slate-50' }}">
       <td class="px-3 py-2 text-sm text-slate-500">#{{ ticket.id }}</td>
       <td class="px-3 py-2 text-sm font-medium">{{ ticket.title }}</td>
       <td class="px-3 py-2 text-sm">
@@ -82,11 +112,29 @@
           {{ STATUS_LABELS.get(ticket.status, ticket.status) }}
         </span>
       </td>
+      <td class="px-3 py-2 text-sm whitespace-nowrap">
+        <span class="{{ 'font-semibold text-red-700' if ticket.overdue else 'text-slate-600' }}">{{ ticket.due_at | dia }}</span>
+        {% if ticket.overdue %}
+        <span class="ml-1 inline-block rounded bg-red-600 px-1.5 py-0.5 text-xs font-bold text-white">Vencido</span>
+        {% endif %}
+      </td>
       <td class="px-3 py-2 text-sm text-slate-500 whitespace-nowrap">{{ ticket.created_at | fecha }}</td>
+      <td class="px-3 py-2 text-sm whitespace-nowrap">
+        <div class="flex gap-1">
+          {% if ticket.status == "open" %}
+            {{ accion(ticket.id, "in_progress", "Empezar", "bg-sky-600 text-white hover:bg-sky-700") }}
+            {{ accion(ticket.id, "closed", "Resolver", "bg-emerald-600 text-white hover:bg-emerald-700") }}
+          {% elif ticket.status == "in_progress" %}
+            {{ accion(ticket.id, "closed", "Resolver", "bg-emerald-600 text-white hover:bg-emerald-700") }}
+          {% else %}
+            {{ accion(ticket.id, "open", "Reabrir", "bg-white text-slate-700 ring-1 ring-slate-300 hover:bg-slate-100") }}
+          {% endif %}
+        </div>
+      </td>
     </tr>
     {% else %}
     <tr>
-      <td colspan="8"class="px-3 py-8 text-center text-sm text-slate-500">No hay tickets.</td>
+      <td colspan="10" class="px-3 py-8 text-center text-sm text-slate-500">No hay tickets.</td>
     </tr>
     {% endfor %}
   </tbody>

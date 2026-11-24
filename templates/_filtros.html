@@ -1,11 +1,15 @@
 {# Bloques 2 y 3: filtros + tablero.
-   Contexto: tickets (lista) y filtros (dict con los filtros activos, p. ej. {"category": "bug"}).
+   Contexto: tickets (lista), filtros (dict con los filtros activos, p. ej. {"category": "bug"}),
+   solo_vencidos (bool) y total_vencidos (int).
 
    Cómo se conecta todo con HTMX:
    - Al cambiar cualquier filtro, HTMX hace GET /tickets/tablero?category=..&priority=..&status=..&assignee=..
      y sustituye el contenido de #tablero por el HTML devuelto (GET /tickets sigue siendo el JSON de la API).
-   - #tablero también se refresca solo con los eventos "ticket-creado" (formulario de crear) y
-     "ticket-actualizado" (editar responsables en la tabla), ver SPEC §7.1, respetando los filtros con hx-include. #}
+   - #tablero también se refresca solo cuando alguien lanza el evento "ticket-creado" (lo lanza el formulario
+     de crear tickets, ver SPEC §7.1) o "ticket-actualizado" (lo lanzan los botones de estado y el
+     "Guardar" de responsables de cada fila, SPEC §7.4), respetando los filtros activos gracias a hx-include.
+   - hx-disinherit="*" en #tablero: los botones de dentro NO heredan su hx-include="#filtros"; si lo
+     heredaran, el PATCH mandaría también category/priority/status de los filtros (422). #}
 <section class="mt-8" aria-labelledby="titulo-tablero">
   <h2 id="titulo-tablero" class="text-xl font-semibold">Tickets</h2>
 
@@ -57,13 +61,20 @@
       {% endfor %}
     </datalist>
 
+    <label class="flex items-center gap-2 pb-2 text-sm font-medium text-red-700">
+      <input type="checkbox" name="vencidos" value="1" class="h-4 w-4 accent-red-600"
+             {{ 'checked' if solo_vencidos }}>
+      Solo vencidos
+    </label>
+
     <a href="/" class="pb-2 text-sm text-slate-500 underline hover:text-slate-800">Limpiar filtros</a>
   </form>
 
   <div id="tablero" class="mt-4 overflow-x-auto"
        hx-get="/tickets/tablero"
        hx-trigger="ticket-creado from:body, ticket-actualizado from:body"
-       hx-include="#filtros">
+       hx-include="#filtros"
+       hx-disinherit="*">
     {% include "_tickets_table.html" %}
   </div>
 </section>
