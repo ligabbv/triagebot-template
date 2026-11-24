@@ -9,50 +9,61 @@
      de crear tickets, ver SPEC §7.1) o "ticket-actualizado" (lo lanzan los botones de estado y el
      "Guardar" de responsables de cada fila, SPEC §7.4), respetando los filtros activos gracias a hx-include.
    - hx-disinherit="*" en #tablero: los botones de dentro NO heredan su hx-include="#filtros"; si lo
-     heredaran, el PATCH mandaría también category/priority/status de los filtros (422). #}
-<section class="mt-8" aria-labelledby="titulo-tablero">
-  <h2 id="titulo-tablero" class="text-xl font-semibold">Tickets</h2>
+     heredaran, el PATCH mandaría también category/priority/status de los filtros (422).
+   Las clases .selector, .chip, etc. están definidas en index.html. #}
+<section class="mt-24" aria-labelledby="titulo-tablero">
+  <div class="flex flex-wrap items-end justify-between gap-4">
+    <div>
+      <h2 id="titulo-tablero" class="scroll-mt-20 text-[40px] font-semibold tracking-tight">Tickets</h2>
+      <p class="mt-1 text-[15px] text-gris">Filtra por categoría, prioridad, estado o responsable.</p>
+    </div>
+    <a href="/" class="text-[15px] text-acento hover:underline">Limpiar filtros</a>
+  </div>
 
   {# "submit": pulsar Enter en el campo Responsable filtra sin recargar la página. #}
-  <form id="filtros" class="mt-3 flex flex-wrap items-end gap-4"
+  <form id="filtros" class="mt-6 flex flex-wrap items-center gap-3"
         hx-get="/tickets/tablero"
         hx-target="#tablero"
         hx-trigger="change, submit">
-    <label class="text-sm">
-      <span class="block font-medium text-slate-700">Categoría</span>
-      <select name="category" class="mt-1 rounded border border-slate-300 bg-white px-2 py-1.5">
-        <option value="">Todas</option>
+    <label>
+      <span class="sr-only">Categoría</span>
+      <select name="category" class="selector">
+        <option value="">Todas las categorías</option>
         {% for value, label in CATEGORY_LABELS.items() %}
         <option value="{{ value }}" {{ 'selected' if filtros.get('category') == value }}>{{ label }}</option>
         {% endfor %}
       </select>
     </label>
 
-    <label class="text-sm">
-      <span class="block font-medium text-slate-700">Prioridad</span>
-      <select name="priority" class="mt-1 rounded border border-slate-300 bg-white px-2 py-1.5">
-        <option value="">Todas</option>
+    <label>
+      <span class="sr-only">Prioridad</span>
+      <select name="priority" class="selector">
+        <option value="">Todas las prioridades</option>
         {% for value, label in PRIORITY_LABELS.items() %}
         <option value="{{ value }}" {{ 'selected' if filtros.get('priority') == value }}>{{ label }}</option>
         {% endfor %}
       </select>
     </label>
 
-    <label class="text-sm">
-      <span class="block font-medium text-slate-700">Estado</span>
-      <select name="status" class="mt-1 rounded border border-slate-300 bg-white px-2 py-1.5">
-        <option value="">Todos</option>
+    <label>
+      <span class="sr-only">Estado</span>
+      <select name="status" class="selector">
+        <option value="">Todos los estados</option>
         {% for value, label in STATUS_LABELS.items() %}
         <option value="{{ value }}" {{ 'selected' if filtros.get('status') == value }}>{{ label }}</option>
         {% endfor %}
       </select>
     </label>
 
-    <label class="text-sm">
-      <span class="block font-medium text-slate-700">Responsable</span>
+    <label class="relative">
+      <span class="sr-only">Responsable</span>
+      <svg class="pointer-events-none absolute left-3.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gris" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+        <circle cx="9" cy="9" r="6" stroke="currentColor" stroke-width="2"></circle>
+        <path d="M14 14l4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+      </svg>
       <input type="search" name="assignee" list="lista-responsables" maxlength="50"
-             value="{{ filtros.get('assignee', '') }}" placeholder="Todos"
-             class="mt-1 w-44 rounded border border-slate-300 bg-white px-2 py-1.5">
+             value="{{ filtros.get('assignee', '') }}" placeholder="Responsable"
+             class="w-48 rounded-full border border-linea/70 bg-white py-2 pl-9 pr-4 text-[13px] text-tinta placeholder:text-gris focus:border-acento focus:outline-none focus:ring-4 focus:ring-acento/15">
     </label>
     {# Sugerencias: nombres ya asignados. También las usa el campo Responsables del formulario. #}
     <datalist id="lista-responsables">
@@ -61,16 +72,14 @@
       {% endfor %}
     </datalist>
 
-    <label class="flex items-center gap-2 pb-2 text-sm font-medium text-red-700">
-      <input type="checkbox" name="vencidos" value="1" class="h-4 w-4 accent-red-600"
+    <label class="inline-flex cursor-pointer items-center gap-2 rounded-full border border-linea/70 bg-white py-2 pl-3 pr-4 text-[13px] font-medium text-tinta transition has-[:checked]:border-rojo-vivo has-[:checked]:bg-rojo-suave has-[:checked]:text-rojo">
+      <input type="checkbox" name="vencidos" value="1" class="h-3.5 w-3.5 accent-[#ff3b30]"
              {{ 'checked' if solo_vencidos }}>
       Solo vencidos
     </label>
-
-    <a href="/" class="pb-2 text-sm text-slate-500 underline hover:text-slate-800">Limpiar filtros</a>
   </form>
 
-  <div id="tablero" class="mt-4 overflow-x-auto"
+  <div id="tablero" class="mt-6"
        hx-get="/tickets/tablero"
        hx-trigger="ticket-creado from:body, ticket-actualizado from:body"
        hx-include="#filtros"
