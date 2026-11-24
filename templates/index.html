@@ -12,7 +12,11 @@
     <h1 class="text-3xl font-bold">TriageBot</h1>
     <p class="mt-2 text-slate-600">Tablero de incidencias con clasificación automática por IA.</p>
 
-    <!-- TODO: formulario + filtros + tabla HTMX -->
+    <!-- BLOQUE 1: formulario para crear tickets (otra rama). Al crear un ticket debe lanzar
+         el evento "ticket-creado" para que el tablero se refresque (ver SPEC §7.1). -->
+
+    <!-- BLOQUES 2 y 3: filtros + tablero -->
+    {% include "_filtros.html" %}
   </main>
 </body>
 </html>
