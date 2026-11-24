@@ -1,23 +1,66 @@
-<div class="overflow-x-auto">
-  <table class="min-w-full divide-y divide-slate-200 bg-white shadow-sm ring-1 ring-slate-200 rounded-lg overflow-hidden">
-    <thead class="bg-slate-100">
-      <tr>
-        <th class="px-3 py-2 text-left text-sm font-semibold">ID</th>
-        <th class="px-3 py-2 text-left text-sm font-semibold">Título</th>
-        <th class="px-3 py-2 text-left text-sm font-semibold">Categoría</th>
-        <th class="px-3 py-2 text-left text-sm font-semibold">Prioridad</th>
-        <th class="px-3 py-2 text-left text-sm font-semibold">Tags</th>
-        <th class="px-3 py-2 text-left text-sm font-semibold">Estado</th>
-        <th class="px-3 py-2 text-left text-sm font-semibold">Creado</th>
-      </tr>
-    </thead>
-    {# Al crearse un ticket, POST /tickets emite "ticket-created" y estas filas se recargan. #}
-    <tbody id="tickets-table-body"
-           class="divide-y divide-slate-100"
-           hx-get="/partials/tickets"
-           hx-trigger="ticket-created from:body"
-           hx-swap="innerHTML">
-      {% include "_tickets_rows.html" %}
-    </tbody>
-  </table>
-</div>
+{# Fragmento: tabla de tickets (bloque 2). Lo sirven GET / (página completa) y GET /tickets/tablero (HTMX).
+   Contexto: tickets = lista de dicts. Jinja2 escapa el HTML automáticamente: no usar |safe con datos de usuario. #}
+{% set category_classes = {
+  "bug": "bg-red-100 text-red-800",
+  "feature_request": "bg-blue-100 text-blue-800",
+  "question": "bg-slate-200 text-slate-800",
+  "urgent": "bg-orange-200 text-orange-900"
+} %}
+{% set priority_classes = {
+  "P1": "bg-red-600 text-white",
+  "P2": "bg-amber-400 text-amber-950",
+  "P3": "bg-slate-300 text-slate-800"
+} %}
+{% set status_classes = {
+  "open": "bg-emerald-100 text-emerald-800",
+  "in_progress": "bg-sky-100 text-sky-800",
+  "closed": "bg-slate-200 text-slate-600"
+} %}
+<table class="min-w-full divide-y divide-slate-200 bg-white shadow-sm ring-1 ring-slate-200 rounded-lg overflow-hidden">
+  <thead class="bg-slate-100">
+    <tr>
+      <th class="px-3 py-2 text-left text-sm font-semibold">ID</th>
+      <th class="px-3 py-2 text-left text-sm font-semibold">Título</th>
+      <th class="px-3 py-2 text-left text-sm font-semibold">Categoría</th>
+      <th class="px-3 py-2 text-left text-sm font-semibold">Prioridad</th>
+      <th class="px-3 py-2 text-left text-sm font-semibold">Etiquetas</th>
+      <th class="px-3 py-2 text-left text-sm font-semibold">Estado</th>
+      <th class="px-3 py-2 text-left text-sm font-semibold">Creado (UTC)</th>
+    </tr>
+  </thead>
+  <tbody id="tickets-table-body" class="divide-y divide-slate-100">
+    {% for ticket in tickets %}
+    <tr class="hover:bg-slate-50">
+      <td class="px-3 py-2 text-sm text-slate-500">#{{ ticket.id }}</td>
+      <td class="px-3 py-2 text-sm font-medium">{{ ticket.title }}</td>
+      <td class="px-3 py-2 text-sm">
+        <span class="inline-block rounded-full px-2 py-0.5 text-xs font-semibold {{ category_classes.get(ticket.category, 'bg-slate-200 text-slate-800') }}">
+          {{ CATEGORY_LABELS.get(ticket.category, ticket.category) }}
+        </span>
+      </td>
+      <td class="px-3 py-2 text-sm">
+        <span class="inline-block rounded px-2 py-0.5 text-xs font-bold {{ priority_classes.get(ticket.priority, 'bg-slate-300 text-slate-800') }}">
+          {{ PRIORITY_LABELS.get(ticket.priority, ticket.priority) }}
+        </span>
+      </td>
+      <td class="px-3 py-2 text-sm">
+        {% for tag in ticket.tags %}
+        <span class="mr-1 inline-block rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-700">{{ tag }}</span>
+        {% else %}
+        <span class="text-slate-400">—</span>
+        {% endfor %}
+      </td>
+      <td class="px-3 py-2 text-sm">
+        <span class="inline-block rounded-full px-2 py-0.5 text-xs font-semibold {{ status_classes.get(ticket.status, 'bg-slate-200 text-slate-600') }}">
+          {{ STATUS_LABELS.get(ticket.status, ticket.status) }}
+        </span>
+      </td>
+      <td class="px-3 py-2 text-sm text-slate-500 whitespace-nowrap">{{ ticket.created_at | fecha }}</td>
+    </tr>
+    {% else %}
+    <tr>
+      <td colspan="7" class="px-3 py-8 text-center text-sm text-slate-500">No hay tickets.</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>

@@ -58,8 +58,9 @@ app/
 ├── db.py            # Toda la persistencia con sqlite3: init, insert, get, list, update.
 └── classifier.py    # La ÚNICA llamada al LLM. Expone classify_ticket().
 templates/
-├── index.html       # Página completa (GET /)
-└── _rows.html       # Fragmento: filas de la tabla (lo reutilizan GET / y las respuestas HTMX)
+├── index.html             # Página completa (GET /). Incluye los bloques del §7
+├── _filtros.html          # Bloques 2 y 3: los 3 filtros + el contenedor #tablero
+└── _tickets_table.html    # Fragmento: la tabla (lo reutilizan GET / y GET /tickets/tablero)
 tests/
 └── test_acceptance.py   # Obligatorio. NO se modifica.
 ```
@@ -156,10 +157,16 @@ CREATE TABLE IF NOT EXISTS tickets (
 
 ## 5. Endpoints HTTP
 
-Cinco endpoints. Todos viven en `app.main`. Los de `/tickets` devuelven **JSON**
-por defecto; si la petición viene de HTMX (cabecera `HX-Request: true`),
-devuelven el **fragmento HTML** `_rows.html` para refrescar la tabla. Los tests
-usan siempre JSON.
+Seis endpoints. Todos viven en `app.main`. **JSON y HTML están separados por ruta**,
+cada uno con un propósito claro (no se decide por cabeceras):
+
+| Ruta | Devuelve | Para qué sirve |
+|------|----------|----------------|
+| `GET /tickets` (y `POST`, `GET/PATCH /tickets/{id}`) | **JSON** | La API: tests, scripts y el agente del Día 3 |
+| `GET /tickets/tablero` | **HTML** (solo la tabla) | Lo que pide HTMX para refrescar el tablero |
+| `GET /` | **HTML** (página completa) | Lo que abre el usuario en el navegador |
+
+Los tests usan siempre JSON.
 
 ### `POST /tickets`
 
@@ -221,6 +228,32 @@ GET /tickets?category=bug&priority=P1&status=open
 - **Response `422`**: si un filtro trae un valor fuera de su enum
   (p. ej. `?priority=P9`).
 
+### `GET /tickets/tablero`
+
+Devuelve **HTML**, no JSON: solo el fragmento de la tabla (`_tickets_table.html`),
+pensado para que HTMX lo inserte en `#tablero`. El JSON de los mismos datos es
+`GET /tickets`.
+
+**Query params opcionales** (combinables): `category`, `priority`, `status`. Un
+valor **vacío** (la opción "Todos" de un `<select>` envía `category=`) significa
+"sin filtro", **no** es un error.
+
+```text
+GET /tickets/tablero?category=bug&priority=&status=open
+```
+
+- **Response `200 OK`**: `text/html` con la tabla; si no hay resultados, una fila
+  "No hay tickets.".
+- **Response `422`**: si un filtro trae un valor no vacío fuera de su enum
+  (p. ej. `?category=URGENT`).
+- **Cabecera `HX-Push-Url`**: la respuesta indica a HTMX la URL de la página
+  completa con los filtros (`/?category=bug&status=open`, o `/` sin filtros), para
+  que **al refrescar el navegador no se pierdan**.
+
+> **Orden de rutas:** `GET /tickets/tablero` debe declararse **antes** que
+> `GET /tickets/{id}` en `main.py`. Si no, FastAPI intenta convertir `"tablero"`
+> a entero y devuelve `422`.
+
 ### `GET /tickets/{id}`
 
 - **Response `200 OK`**: ticket JSON.
@@ -247,6 +280,12 @@ tras la creación.
 
 Renderiza `index.html` con el tablero (sección 7). **Devuelve HTML, no JSON**
 — no confundir con `GET /tickets`.
+
+Acepta los mismos filtros opcionales que `GET /tickets/tablero`
+(`/?category=bug&status=open`) y los aplica al renderizar: la tabla sale ya
+filtrada y los `<select>` aparecen con su valor seleccionado. Así, al refrescar
+(F5) o compartir la URL, los filtros se conservan. `422` si algún valor no vacío
+no es válido.
 
 ---
 
@@ -348,15 +387,44 @@ contener:
      formulario, no un JSON crudo.
 2. **Tablero** con la lista de tickets, mostrando: `id`, `title`, `category`
    (color según valor), `priority` (badge: P1 rojo, P2 ámbar, P3 gris), `tags`
-   (chips), `status`, `created_at` (formato `dd/mm/aaaa hh:mm`).
+   (chips), `status`, `created_at` (formato `dd/mm/aaaa hh:mm`, hora UTC).
+   - Todo el texto visible está **en castellano**. Los valores internos de la API
+     no cambian (`bug`, `P1`, `open`…); solo se traducen al mostrarlos:
+
+     | Campo | Valores mostrados |
+     |-------|-------------------|
+     | `category` | `bug` → Error · `feature_request` → Mejora · `question` → Duda · `urgent` → Urgente |
+     | `priority` | `P1` → P1 · Alta · `P2` → P2 · Media · `P3` → P3 · Baja |
+     | `status` | `open` → Abierto · `in_progress` → En curso · `closed` → Cerrado |
+
+   - Cabeceras: ID, Título, Categoría, Prioridad, Etiquetas, Estado, Creado (UTC).
+   - Sin tags se muestra "—". Sin tickets, una fila "No hay tickets.".
 3. **Filtros**: tres `<select>` (`category` / `priority` / `status`), cada uno
-   con una opción "Todos". Al cambiar cualquiera, HTMX hace
-   `GET /tickets?…` con los tres valores (`hx-include`) y reemplaza solo las
-   filas.
+   con una opción "Todas"/"Todos". Al cambiar cualquiera, HTMX hace
+   `GET /tickets/tablero?category=…&priority=…&status=…` (el formulario de filtros
+   envía los tres valores) y reemplaza el contenido de `#tablero`. Hay un enlace
+   "Limpiar filtros" (`/`). Los filtros activos viven en la URL (ver
+   `GET /tickets/tablero` y `GET /`), así que sobreviven a un refresco.
 4. **Cambio de estado** desde la tabla: un `<select>` de `status` por fila que
    hace `PATCH /tickets/{id}` y refresca la fila.
 5. **Estado vacío**: si no hay tickets (o el filtro no devuelve nada), una fila
    con "No hay tickets".
+
+### 7.1 Contrato entre el formulario (bloque 1) y el tablero (bloques 2 y 3)
+
+El formulario y el tablero se desarrollan por separado y se conectan **solo por un
+evento HTMX**:
+
+- El contenedor `#tablero` (en `_filtros.html`) escucha
+  `hx-trigger="ticket-creado from:body"` y, al recibirlo, hace
+  `GET /tickets/tablero` incluyendo los filtros activos (`hx-include="#filtros"`).
+- **Quien cree un ticket debe lanzar el evento `ticket-creado`** cuando el
+  `POST /tickets` responda `201`; por ejemplo con
+  `hx-on::after-request="if (event.detail.successful) htmx.trigger('body', 'ticket-creado')"`
+  en el `<form>`. Sin esto, el ticket se guarda pero la lista no se actualiza hasta
+  recargar.
+- El formulario **no** debe usar `#tablero` como `hx-target`: no sabe nada de los
+  filtros ni de la tabla, solo avisa de que hay un ticket nuevo.
 
 Reglas:
 
@@ -482,4 +550,8 @@ el README) con fecha y motivo. Ejemplo:
 | 2026-11-23 | Fase backend: sin tests propios. **Lab 2:** se añade `tests/test_classifier.py` (§9.2) con un cliente de IA falso; `tests/test_acceptance.py` sigue sin tocarse. | El Lab 2 exige al menos un test del módulo clasificador. Los tests de aceptación sustituyen el clasificador entero, así que no lo prueban. |
 | 2026-11-23 | El backend inicial (`7f0a142`) se subió directo a `main`. **Desde el Lab 2** se trabaja en ramas y se integra con PR a `main` con CI verde. | Requisito del Lab 2 y del §11. |
 | 2026-11-23 | En Windows se usa Python 3.13 para el venv (`py -3.13 -m venv .venv`). | Con Python 3.14 `pydantic==2.10.4` no tiene wheel de `pydantic-core` y la instalación intenta compilar Rust y falla. La CI usa 3.11. |
-| 2026-11-24 | El formulario envía a `POST /tickets` con `hx-swap="none"`. `POST /tickets` sigue devolviendo JSON y añade la cabecera `HX-Trigger: ticket-created`; el `<tbody>` escucha ese evento y recarga sus filas desde `GET /partials/tickets` (HTML, acepta los mismos filtros `category`/`priority`/`status`). | `POST /tickets` y `GET /tickets` tienen que devolver JSON (tests y agente del Día 3), así que HTMX no puede pintar su respuesta en la tabla. Las filas viven en `templates/_tickets_rows.html` y se reutilizarán para los filtros. |
+| 2026-11-24 | **Frontend repartido en dos ramas:** `frontend-tablero-filtros` (bloques 2 y 3: tablero y filtros) y otra rama con el formulario (bloque 1). Se integran con PR a `main`. El cambio de estado por fila (§7.4) queda pendiente. | Trabajar en paralelo sin pisarse. Cada bloque vive en su propia plantilla para reducir conflictos en `index.html`. |
+| 2026-11-24 | **JSON y HTML separados por ruta:** `GET /tickets` → JSON, `GET /tickets/tablero` → HTML. Se elimina la idea de decidir por la cabecera `HX-Request` (§5 original). | Propósito claro por endpoint; los tests y el agente del Día 3 solo ven JSON y no dependen de cabeceras. |
+| 2026-11-24 | El tablero está en castellano: se traducen solo las etiquetas mostradas (Error/Mejora/Duda/Urgente, Alta/Media/Baja, Abierto/En curso/Cerrado). Los valores de la API no cambian. | Marta y su equipo lo usan en castellano; los enums de la API son vinculantes para los tests. |
+| 2026-11-24 | Los filtros viajan por la URL (`/?category=bug`) y `GET /tickets/tablero` responde `HX-Push-Url`. Un filtro vacío ("Todos") se trata como "sin filtro". | Error típico del Lab 4: "mi filtro funciona pero al refrescar la página se pierde". Un `<select>` en "Todos" envía `category=` vacío, que con un enum estricto daría `422`. |
+| 2026-11-24 | `created_at` se muestra en UTC (cabecera "Creado (UTC)") con formato `dd/mm/aaaa hh:mm`. | Es la hora que guarda la BD; convertir a hora local requeriría `tzdata` en Windows (dependencia nueva). |
