@@ -427,20 +427,59 @@ def classify_ticket(title: str, description: str) -> dict:
 
 ### Prompt
 
-Mensaje `system` (punto de partida; podéis mejorarlo):
+El prompt vive en `app/classifier.py` (`SYSTEM_PROMPT` y `FEW_SHOT_EXAMPLES`) y se
+envía así:
 
-> Eres un sistema de clasificación de tickets de soporte técnico. Recibirás el
-> título y la descripción de un ticket. Devuelve EXCLUSIVAMENTE un objeto JSON
-> válido con tres campos: `category` (uno de: bug, feature_request, question,
-> urgent), `priority` (uno de: P1, P2, P3) y `tags` (lista de máx. 5 strings
-> cortos en minúscula). Sin markdown, sin explicaciones, sin texto antes ni
-> después. No inventes categorías.
-> Criterios: `urgent` = servicio caído o bloqueo total de un cliente;
-> `bug` = algo no funciona como debería; `feature_request` = petición de algo
-> nuevo o mejora; `question` = duda de uso. P1 = hay que atenderlo hoy;
-> P2 = importante, mañana; P3 = puede esperar.
+1. Mensaje `system` con criterios explícitos, sacados del histórico de tickets
+   (`seed_tickets.json`):
+   - `urgent` (siempre P1) si hay **impacto masivo** (equipo, planta, almacén o
+     clientes), un **incidente de seguridad**, **pérdida de datos compartidos**, o
+     **una persona bloqueada con plazo inminente o un cliente esperando** (decisión
+     del equipo, 2026-11-24).
+   - `bug` aunque venga redactado como pregunta si algo existente está roto.
+   - `feature_request` para "sería útil / propuesta / permitir…", aunque describa
+     una molestia. Siempre P3.
+   - `question` para dudas de uso, procedimiento o política sin nada roto. P3,
+     salvo seguridad o fecha cercana (P2).
+   - P1 en `bug` si impide trabajar del todo, pierde datos o genera importes
+     erróneos a clientes. **P2 es la prioridad por defecto de un `bug`**, sobre todo
+     si falla un servicio compartido (correo, Teams, intranet, CRM…) aunque sea en
+     parte o vaya lento. P3 solo si es estético o menor, o si el propio texto dice
+     que hay una alternativa que funciona. En caso de duda entre P2 y P3, P2.
+   - `tags`: primero el sistema afectado con un vocabulario fijo (`vpn`, `crm`,
+     `erp`, `correo`, `intranet`, `fichaje`, `gastos`, `seguridad`…), después 1–2
+     tags concretos. Nunca "error", "problema" o "nada".
+2. **13 ejemplos** del histórico como pares `user`/`assistant` (*few-shot*), elegidos
+   para cubrir los casos dudosos de cada categoría. Son los marcados con
+   `ejemplo_prompt: true` en `data/tickets_etiquetados.json`.
+3. El ticket a clasificar como último mensaje `user`:
+   `Título: {title}\nDescripción: {description}`.
 
-Mensaje `user`: `Título: {title}\nDescripción: {description}`.
+Tamaño: unos 1.700 tokens de entrada por ticket (antes, unos 200). Enviar los 140
+tickets del histórico en cada llamada serían unos 11.000 y, al no estar etiquetados,
+no enseñarían el criterio.
+
+**Histórico etiquetado y evaluación.** `data/tickets_etiquetados.json` contiene los
+140 tickets de `seed_tickets.json` con su `category` y `priority` de referencia
+(48 bug, 41 question, 37 feature_request, 14 urgent).
+`scripts/evaluar_clasificador.py` clasifica con el LLM real los que no son ejemplos
+del prompt y muestra el porcentaje de aciertos, la matriz de confusión y los
+fallos. **No es un test**: gasta tokens y necesita `OPENROUTER_API_KEY`. Se lanza a
+mano antes de dar por bueno cualquier cambio del prompt.
+
+Resultados (2026-11-24, 127 tickets, `openai/gpt-oss-120b`):
+
+| Prompt | Categoría | Prioridad | Las dos | Urgentes detectados |
+|--------|-----------|-----------|---------|---------------------|
+| Original (una línea de criterios) | 97,6 % | 72,4 % | 72,4 % | 10 de 11 |
+| Criterios + 13 ejemplos | 97,6 % | 90,6 % | 89,0 % | 11 de 11 |
+| + regla "P2 por defecto en bug" (actual) | 98,4 % | 93,7 % | 92,9 % | 11 de 11 |
+
+Los fallos que quedan van casi todos hacia **más** prioridad (un `bug` menor como
+P2 en vez de P3), que es el error menos dañino. Las etiquetas de referencia las
+puso el equipo con estos mismos criterios, y la regla del P2 se ajustó viendo los
+fallos de la ronda anterior, así que las cifras son algo optimistas: para validar
+de verdad hacen falta tickets nuevos etiquetados por Soporte.
 
 ### Parseo y validación de la salida
 
@@ -687,3 +726,4 @@ el README) con fecha y motivo. Ejemplo:
 | 2026-11-24 | **"Resuelto" = `closed`**: no se añade un estado nuevo; se reutiliza `closed` y se muestra como "Resuelto". Reabrir = volver a `open`. | Petición de Marta: abierto → en curso → resuelto, y reabrir. Los enums de la API son vinculantes (tests, agente del Día 3); cambiar `closed` por `resolved` rompería el contrato. |
 | 2026-11-24 | El flujo de estados (§4.2) lo **guía el tablero** con botones; la API sigue aceptando cualquier estado válido. | El test de aceptación 5 pasa de `open` a `in_progress` por `PATCH` y el agente del Día 3 necesitará libertad; un `409` por transición inválida sería un contrato nuevo. |
 | 2026-11-24 | **Varios responsables por ticket** (cambio de requisitos del cliente): campo `assignees: list[str]` en texto libre, en tabla propia `ticket_assignees` (N:M). Se asignan al crear (opcional) y se sustituyen con `PATCH`. Filtro `assignee` en `GET /tickets`, `GET /tickets/tablero` y `GET /`, que devuelve los tickets donde esa persona es **una de** sus responsables. Se aceptan como lista JSON o texto separado por comas. | Marta: "muchas veces hay dos o tres técnicos en el mismo ticket" y "que cada técnico vea lo suyo". Texto libre porque no hay usuarios ni login (fuera de alcance). Tabla propia para filtrar con SQL normal y sin migrar la BD existente. El texto con comas evita JavaScript propio en el formulario (`json-enc` envía el campo como string). |
+| 2026-11-24 | **Prompt con criterios del histórico y 13 ejemplos (few-shot)** en lugar de enviar los 140 tickets antiguos en cada llamada. Los 140 se etiquetan a mano en `data/tickets_etiquetados.json` y sirven para medir el acierto con `scripts/evaluar_clasificador.py`. Una persona bloqueada con plazo inminente o cliente esperando → `urgent` P1. | Los tickets antiguos no traían etiqueta, así que enviarlos tal cual no enseña el criterio y multiplicaría por ~50 los tokens y la latencia. La regla del plazo inminente la decide el equipo y encaja con el BRIEF ("esto urge porque tenemos demo el viernes"). |
